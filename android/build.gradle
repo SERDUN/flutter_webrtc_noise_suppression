@@ -57,8 +57,8 @@ android {
         // flutter_webrtc's AudioProcessingAdapter extends libwebrtc's
         // ExternalAudioProcessingFactory.AudioProcessing, and flutter_webrtc takes libwebrtc as
         // `implementation`, so it is not on this module's compile classpath; at run time
-        // flutter_webrtc's own copy is the one loaded. Keep the version flutter_webrtc's
-        // android/build.gradle names.
+        // flutter_webrtc's own copy is the one loaded. The version is upstream flutter_webrtc
+        // 1.6.3's; only the AudioProcessing interface is compiled against.
         compileOnly("io.github.webrtc-sdk:android:150.7871.04")
     }
 }

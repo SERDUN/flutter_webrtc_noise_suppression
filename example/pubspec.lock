@@ -131,11 +131,10 @@ packages:
   flutter_webrtc:
     dependency: "direct main"
     description:
-      path: "."
-      ref: "po/1.6.3-1"
-      resolved-ref: b423d43fcaddce830f4baeb33b7f06e712c61183
-      url: "https://github.com/portaone/flutter-webrtc.git"
-    source: git
+      name: flutter_webrtc
+      sha256: b98ef03376401e54ff87fc78907b38e562b15ca8424aba589c263eddc3c1ecf9
+      url: "https://pub.dev"
+    source: hosted
     version: "1.6.3"
   flutter_webrtc_noise_suppression:
     dependency: "direct main"

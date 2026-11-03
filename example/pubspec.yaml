@@ -19,10 +19,8 @@ dependencies:
 
   flutter_webrtc_noise_suppression:
     path: ../
-  flutter_webrtc:
-    git:
-      url: https://github.com/portaone/flutter-webrtc.git
-      ref: po/1.6.3-1
+  # Upstream, from pub.dev: the example checks the add-on against the flutter_webrtc it is made for.
+  flutter_webrtc: ^1.6.3
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.

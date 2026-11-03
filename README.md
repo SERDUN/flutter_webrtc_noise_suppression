@@ -33,12 +33,24 @@ await bridge.detach(); // true: it was there and is out
 
 ## Pins
 
-This plugin is made for flutter_webrtc's fork `portaone/flutter-webrtc` at `po/1.6.3-1`; its `pubspec.yaml` names it. An app takes the same spec - pub resolves one flutter_webrtc for the whole app, so a spec that differs is a resolution error.
+The plugin needs `flutter_webrtc: ^1.6.3` from pub.dev: the capture slot, the Android controller's accessor and the SPM `WebRTC` product it uses are upstream API (upstream `v1.6.3` checked; the slot itself is there since `v1.0.0`). An app that builds with a fork of flutter_webrtc names the fork under `dependency_overrides`, because pub refuses one package from two sources (git for the app, pub.dev for the plugin):
+
+```yaml
+dependencies:
+  flutter_webrtc: ^1.6.3
+dependency_overrides:
+  flutter_webrtc:
+    git:
+      url: https://github.com/<owner>/flutter-webrtc.git
+      ref: <ref>
+```
+
+The override switches off pub's version check for flutter_webrtc: a fork must keep the slot's API.
 
 ## Traps
 
 - **Android engines.** Each Flutter engine has its own flutter_webrtc plugin. Each engine also gets its own instance of this plugin, which reaches the flutter_webrtc of that engine, never `FlutterWebRTCPlugin.sharedSingleton`: that names the engine created last, and in an app with background engines (push, call services) it may be one whose factory is never initialized.
-- **Android libwebrtc.** `AudioProcessingAdapter` extends libwebrtc's `ExternalAudioProcessingFactory.AudioProcessing`, and flutter_webrtc takes libwebrtc as `implementation`, so `android/build.gradle` names it `compileOnly` at flutter_webrtc's version (`io.github.webrtc-sdk:android:150.7871.04`). Change both together.
+- **Android libwebrtc.** `AudioProcessingAdapter` extends libwebrtc's `ExternalAudioProcessingFactory.AudioProcessing`, and flutter_webrtc takes libwebrtc as `implementation`, so `android/build.gradle` names it `compileOnly` at upstream 1.6.3's version (`io.github.webrtc-sdk:android:150.7871.04`). Only the `AudioProcessing` interface is used, and the app's flutter_webrtc brings the libwebrtc that runs.
 - **iOS is process-wide.** flutter_webrtc keeps one `AudioManager` for the process: one attached suppressor covers every engine.
 - **The rate.** A processor added while the microphone already runs is never told the rate; the length of the first frame (10 ms) gives it.
 - **iOS log level.** The two lines a call are os_log's default level: on an iPhone the log stream dropped info lines of this subsystem.

@@ -8,15 +8,14 @@ environment:
   sdk: ^3.8.0
   flutter: '>=3.19.0'
 
-# An app takes the same flutter_webrtc spec: pub resolves one flutter_webrtc for the whole app, so
-# a spec that differs is a resolution error, not a second copy.
+# flutter_webrtc's public capture post-processing slot (AudioProcessingAdapter on Android,
+# AudioManager.capturePostProcessingAdapter on iOS), the accessor of its Android controller and its
+# SPM `WebRTC` product are all upstream API, checked at 1.6.3. An app on a fork of flutter_webrtc
+# names the fork under dependency_overrides.
 dependencies:
   flutter:
     sdk: flutter
-  flutter_webrtc:
-    git:
-      url: https://github.com/portaone/flutter-webrtc.git
-      ref: po/1.6.3-1
+  flutter_webrtc: ^1.6.3
 
 dev_dependencies:
   flutter_test:
