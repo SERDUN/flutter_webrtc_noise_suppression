@@ -10,8 +10,7 @@ environment:
 
 # flutter_webrtc's public capture post-processing slot (AudioProcessingAdapter on Android,
 # AudioManager.capturePostProcessingAdapter on iOS), the accessor of its Android controller and its
-# SPM `WebRTC` product are all upstream API, checked at 1.6.3. An app on a fork of flutter_webrtc
-# names the fork under dependency_overrides.
+# SPM `WebRTC` product, checked at 1.6.3.
 dependencies:
   flutter:
     sdk: flutter

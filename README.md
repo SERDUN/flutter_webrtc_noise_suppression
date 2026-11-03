@@ -31,21 +31,9 @@ await bridge.detach(); // true: it was there and is out
 
 `attach` returns false when flutter_webrtc has not built its factory yet (it does on its first use: `getUserMedia`, `createPeerConnection`) or the suppressor cannot be created; the audio is then left as it was. Attach when the microphone track opens and detach when it stops. On detach the native side logs one line: `detached: processed=N unchanged=M [what the slot announced]` (logcat tag `WebrtcNoiseSuppression`, os_log subsystem `com.portaone.flutter_webrtc_noise_suppression`).
 
-## Pins
+## Requirements
 
-The plugin needs `flutter_webrtc: ^1.6.3` from pub.dev: the capture slot, the Android controller's accessor and the SPM `WebRTC` product it uses are upstream API (upstream `v1.6.3` checked; the slot itself is there since `v1.0.0`). An app that builds with a fork of flutter_webrtc names the fork under `dependency_overrides`, because pub refuses one package from two sources (git for the app, pub.dev for the plugin):
-
-```yaml
-dependencies:
-  flutter_webrtc: ^1.6.3
-dependency_overrides:
-  flutter_webrtc:
-    git:
-      url: https://github.com/<owner>/flutter-webrtc.git
-      ref: <ref>
-```
-
-The override switches off pub's version check for flutter_webrtc: a fork must keep the slot's API.
+`flutter_webrtc: ^1.6.3`. The capture slot, the Android controller's accessor and the SPM `WebRTC` product the plugin uses are flutter_webrtc's public API (checked at `v1.6.3`; the slot itself is there since `v1.0.0`).
 
 ## Traps
 
