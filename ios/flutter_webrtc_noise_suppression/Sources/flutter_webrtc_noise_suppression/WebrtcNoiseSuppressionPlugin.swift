@@ -58,7 +58,7 @@ public final class WebrtcNoiseSuppressionPlugin: NSObject, FlutterPlugin {
   /// The engine names of the Dart API; a missing one is RNNoise v0.1.1.
   private static func model(_ engine: String?) -> NSPRnnoiseModel? {
     switch engine {
-    case nil, "rnnoise": return NSPRnnoiseModel.v01
+    case nil, "rnnoise": return NSPRnnoiseModel.v0_1
     case "rnnoise-little": return NSPRnnoiseModel.little
     default: return nil
     }
@@ -149,6 +149,14 @@ private final class SuppressorFrameProcessor: NSObject, ExternalAudioProcessingD
   private var lastResult: NSPNoiseSuppressorResult?
   private var announced = ""
 
+  // Time per frame in the call, without allocating on the audio thread: 200 us buckets up to 20 ms,
+  // the last one for everything longer.
+  private static let bucketNs: UInt64 = 200_000
+  private static let bucketCount = 100
+  private var buckets = [Int](repeating: 0, count: SuppressorFrameProcessor.bucketCount + 1)
+  private var totalNs: UInt64 = 0
+  private var maxNs: UInt64 = 0
+
   init(suppressor: NSPNoiseSuppressor, model: NSPRnnoiseModel) {
     self.suppressor = suppressor
     self.model = model
@@ -172,7 +180,12 @@ private final class SuppressorFrameProcessor: NSObject, ExternalAudioProcessingD
     }
     // A frame the engine cannot take comes back unchanged, so the call keeps the audio it would
     // have had without the suppressor.
+    let start = DispatchTime.now().uptimeNanoseconds
     let result = suppressor.processSamples(audioBuffer.rawBuffer(forChannel: 0), count: frames)
+    let spent = DispatchTime.now().uptimeNanoseconds - start
+    totalNs += spent
+    maxNs = max(maxNs, spent)
+    buckets[min(Int(spent / Self.bucketNs), Self.bucketCount)] += 1
     if result == .processed { processed += 1 } else { unchanged += 1 }
     if result != lastResult {
       lastResult = result
@@ -188,7 +201,25 @@ private final class SuppressorFrameProcessor: NSObject, ExternalAudioProcessingD
   /// length the engine does not take), and what the slot announced. Read after the processor left
   /// the slot, so no frame is counted at the same time.
   func summary() -> String {
-    "\(suppressor.engine) processed=\(processed) unchanged=\(unchanged) \(announced)"
+    let frames = processed + unchanged
+    let meanUs = frames == 0 ? 0 : totalNs / UInt64(frames) / 1000
+    let overBudget = buckets[Int(10_000_000 / Self.bucketNs)...].reduce(0, +)
+    return "\(suppressor.engine) processed=\(processed) unchanged=\(unchanged) mean_us=\(meanUs)"
+      + " p99_us=\(percentileUs(0.99)) max_us=\(maxNs / 1000) over_10ms=\(overBudget) \(announced)"
+  }
+
+  /// The upper edge of the bucket the `q` quantile falls in; the last bucket reads as its floor.
+  private func percentileUs(_ q: Double) -> UInt64 {
+    let frames = buckets.reduce(0, +)
+    if frames == 0 { return 0 }
+    var seen = 0
+    for (i, count) in buckets.enumerated() {
+      seen += count
+      if Double(seen) >= q * Double(frames) {
+        return UInt64(i == Self.bucketCount ? i : i + 1) * Self.bucketNs / 1000
+      }
+    }
+    return UInt64(Self.bucketCount) * Self.bucketNs / 1000
   }
 
   func releaseEngine() {

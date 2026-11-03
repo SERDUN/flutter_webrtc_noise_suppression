@@ -209,6 +209,12 @@ private class SuppressorFrameProcessor(
     private var lastResult: NoiseSuppressor.Result? = null
     private val announced = StringBuilder()
 
+    // Time per frame in the call, without allocating on the audio thread: 200 us buckets up to
+    // 20 ms, the last one for everything longer.
+    private val buckets = IntArray(BUCKETS + 1)
+    private var totalNs = 0L
+    private var maxNs = 0L
+
     override fun initialize(
         sampleRateHz: Int,
         numChannels: Int,
@@ -238,7 +244,12 @@ private class SuppressorFrameProcessor(
         }
         // A frame the engine cannot take comes back unchanged, so the call keeps the audio it
         // would have had without the suppressor.
+        val start = System.nanoTime()
         val result = suppressor.process(buffer, numFrames)
+        val spent = System.nanoTime() - start
+        totalNs += spent
+        if (spent > maxNs) maxNs = spent
+        buckets[minOf((spent / BUCKET_NS).toInt(), BUCKETS)]++
         if (result == NoiseSuppressor.Result.PROCESSED) processed++ else unchanged++
         if (result != lastResult) {
             lastResult = result
@@ -251,7 +262,37 @@ private class SuppressorFrameProcessor(
      * or length the engine does not take), and what the slot announced. Read after the processor
      * left the slot, so no frame is counted at the same time.
      */
-    fun summary(): String = "${suppressor.engine()} processed=$processed unchanged=$unchanged $announced"
+    fun summary(): String {
+        val frames = processed + unchanged
+        val meanUs = if (frames == 0L) 0 else totalNs / frames / 1000
+        return "${suppressor.engine()} processed=$processed unchanged=$unchanged" +
+            " mean_us=$meanUs p99_us=${percentileUs(0.99)} max_us=${maxNs / 1000}" +
+            " over_10ms=${overBudget()} $announced"
+    }
+
+    /** The upper edge of the bucket the [q] quantile falls in; the last bucket reads as its floor. */
+    private fun percentileUs(q: Double): Long {
+        val frames = buckets.sum()
+        if (frames == 0) return 0
+        var seen = 0
+        for (i in buckets.indices) {
+            seen += buckets[i]
+            if (seen >= q * frames) return (if (i == BUCKETS) i else i + 1) * BUCKET_NS / 1000
+        }
+        return BUCKETS * BUCKET_NS / 1000
+    }
+
+    /** Frames that took longer than the 10 ms they hold. */
+    private fun overBudget(): Int {
+        var over = 0
+        for (i in (10_000_000 / BUCKET_NS).toInt()..BUCKETS) over += buckets[i]
+        return over
+    }
+
+    private companion object {
+        const val BUCKET_NS = 200_000L
+        const val BUCKETS = 100
+    }
 
     private fun note(event: String) {
         if (announced.length < 400) announced.append('[').append(event).append(']')

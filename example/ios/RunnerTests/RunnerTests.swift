@@ -35,7 +35,7 @@ class RunnerTests: XCTestCase {
   }
 
   func testRnnoiseSuppressorDenoisesWhiteNoise() {
-    denoisesWhiteNoise(.v01)
+    denoisesWhiteNoise(.v0_1)
   }
 
   func testRnnoiseLittleSuppressorDenoisesWhiteNoise() {
