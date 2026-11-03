@@ -8,8 +8,6 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
-import io.github.serdun.noise_suppression.NoiseSuppressor
-import io.github.serdun.noise_suppression.RnnoiseSuppressor
 import java.nio.ByteBuffer
 
 /**

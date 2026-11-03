@@ -1,5 +1,5 @@
 name: flutter_webrtc_noise_suppression
-description: "flutter_webrtc add-on: noise suppression of the captured voice, with the noise_suppression plugin's suppressor in flutter_webrtc's capture post-processing slot."
+description: "flutter_webrtc add-on: noise suppression (RNNoise) of the captured voice in flutter_webrtc's capture post-processing slot."
 version: 0.0.1
 publish_to: none
 homepage: https://github.com/SERDUN/flutter_webrtc_noise_suppression
@@ -8,9 +8,8 @@ environment:
   sdk: ^3.8.0
   flutter: '>=3.19.0'
 
-# Both sides of the add-on. An app takes the same specs: pub resolves one flutter_webrtc and one
-# noise_suppression for the whole app, so a spec that differs is a resolution error, not a second
-# copy.
+# An app takes the same flutter_webrtc spec: pub resolves one flutter_webrtc for the whole app, so
+# a spec that differs is a resolution error, not a second copy.
 dependencies:
   flutter:
     sdk: flutter
@@ -18,10 +17,6 @@ dependencies:
     git:
       url: https://github.com/portaone/flutter-webrtc.git
       ref: po/1.6.3-1
-  noise_suppression:
-    git:
-      url: https://github.com/SERDUN/noise_suppression.git
-      ref: 9c84a591cd0ff02cb34a0f1b8d86e030e6b27b92
 
 dev_dependencies:
   flutter_test:

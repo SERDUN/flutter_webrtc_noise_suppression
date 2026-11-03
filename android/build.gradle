@@ -38,13 +38,21 @@ android {
         main.java.srcDirs += "src/main/kotlin"
     }
 
+    // The C core (noise_suppressor.h + RNNoise) is one copy, inside the iOS Swift package, which
+    // cannot reach sources outside its directory; CMake builds the same files.
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
+    }
+
     defaultConfig {
         minSdk = 24
     }
 
     dependencies {
-        // flutter_webrtc and noise_suppression come from this plugin's pubspec: the Flutter Gradle
-        // plugin adds a plugin's plugin dependencies to its build.
+        // flutter_webrtc comes from this plugin's pubspec: the Flutter Gradle plugin adds a
+        // plugin's plugin dependencies to its build.
         //
         // flutter_webrtc's AudioProcessingAdapter extends libwebrtc's
         // ExternalAudioProcessingFactory.AudioProcessing, and flutter_webrtc takes libwebrtc as

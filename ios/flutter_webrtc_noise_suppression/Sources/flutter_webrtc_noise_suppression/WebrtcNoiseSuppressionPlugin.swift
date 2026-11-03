@@ -2,7 +2,7 @@ import Flutter
 import Foundation
 import WebRTC
 import flutter_webrtc
-import noise_suppression
+import NoiseSuppression
 import os.log
 
 /// Puts an `NSPNoiseSuppressor` into flutter_webrtc's capture post-processing slot.

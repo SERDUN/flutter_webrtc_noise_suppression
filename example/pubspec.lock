@@ -258,15 +258,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.18.0"
-  noise_suppression:
-    dependency: transitive
-    description:
-      path: "."
-      ref: "9c84a591cd0ff02cb34a0f1b8d86e030e6b27b92"
-      resolved-ref: "9c84a591cd0ff02cb34a0f1b8d86e030e6b27b92"
-      url: "https://github.com/SERDUN/noise_suppression.git"
-    source: git
-    version: "0.0.1"
   objective_c:
     dependency: transitive
     description:
