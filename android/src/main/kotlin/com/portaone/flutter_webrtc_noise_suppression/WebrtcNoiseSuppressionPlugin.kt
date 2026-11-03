@@ -129,14 +129,17 @@ class WebrtcNoiseSuppressionPlugin :
             val n = RnnoiseSuppressor.frameSize()
             val frame = ByteBuffer.allocateDirect(n * 4).order(java.nio.ByteOrder.nativeOrder())
             val floats = frame.asFloatBuffer()
-            val random = java.util.Random(12345)
+            // The generator of the C test and of iOS, so the three report on the same noise.
+            var seed = 12345
+
             val times = LongArray(300)
             var inRms = 0.0
             var outRms = 0.0
             for (f in 0 until 300) {
                 var before = 0.0
                 for (i in 0 until n) {
-                    val v = 3000f * (random.nextFloat() * 2f - 1f)
+                    seed = seed * 1103515245 + 12345
+                    val v = 3000f * (((seed ushr 8) and 0xffff) / 32768f - 1f)
                     floats.put(i, v)
                     before += v * v
                 }

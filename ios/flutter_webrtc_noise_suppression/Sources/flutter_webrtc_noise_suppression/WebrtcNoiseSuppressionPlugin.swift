@@ -58,8 +58,8 @@ public final class WebrtcNoiseSuppressionPlugin: NSObject, FlutterPlugin {
   /// The engine names of the Dart API; a missing one is RNNoise v0.1.1.
   private static func model(_ engine: String?) -> NSPRnnoiseModel? {
     switch engine {
-    case nil, "rnnoise": return .v01
-    case "rnnoise-little": return .little
+    case nil, "rnnoise": return NSPRnnoiseModel.v01
+    case "rnnoise-little": return NSPRnnoiseModel.little
     default: return nil
     }
   }
