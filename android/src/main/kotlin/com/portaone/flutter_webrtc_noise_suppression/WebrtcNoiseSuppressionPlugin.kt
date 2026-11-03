@@ -32,12 +32,14 @@ class WebrtcNoiseSuppressionPlugin :
     MethodChannel.MethodCallHandler {
     private var channel: MethodChannel? = null
     private var engine: FlutterEngine? = null
+    private var filesDir: java.io.File? = null
     private var controller: AudioProcessingController? = null
     private var processor: SuppressorFrameProcessor? = null
 
     @Suppress("DEPRECATION")
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         engine = binding.flutterEngine
+        filesDir = binding.applicationContext.getExternalFilesDir(null)
         channel =
             MethodChannel(binding.binaryMessenger, CHANNEL).also {
                 it.setMethodCallHandler(this)
@@ -61,7 +63,7 @@ class WebrtcNoiseSuppressionPlugin :
                 if (model == null) {
                     result.error("unknown_engine", "unknown engine ${call.argument<String>("engine")}", null)
                 } else {
-                    result.success(attach(model))
+                    result.success(attach(model, call.argument<Int>("dumpInputSeconds") ?: 0))
                 }
             }
             "detach" -> result.success(detach())
@@ -85,8 +87,11 @@ class WebrtcNoiseSuppressionPlugin :
      * Returns true when a suppressor of [model] is in the slot after the call. One of another model
      * is taken out first: the slot holds one suppressor at a time.
      */
-    private fun attach(model: RnnoiseSuppressor.Model): Boolean {
-        if (processor?.model == model) return true
+    private fun attach(
+        model: RnnoiseSuppressor.Model,
+        dumpInputSeconds: Int = 0,
+    ): Boolean {
+        if (processor?.model == model && dumpInputSeconds == 0) return true
         if (processor != null) detach()
 
         // Looked up at call time: the plugins of an engine are registered in no fixed order.
@@ -109,7 +114,10 @@ class WebrtcNoiseSuppressionPlugin :
                 return false
             }
 
-        val created = SuppressorFrameProcessor(suppressor, model)
+        // Diagnostics: the frames that reach the slot, before the suppressor, kept in memory for
+        // the given seconds and written on detach. The buffer is allocated here, not per frame.
+        val dump = if (dumpInputSeconds > 0) ShortArray(dumpInputSeconds * 48_000) else null
+        val created = SuppressorFrameProcessor(suppressor, model, dump)
         found.capturePostProcessing.addProcessor(created)
         controller = found
         processor = created
@@ -172,6 +180,7 @@ class WebrtcNoiseSuppressionPlugin :
         // returns no frame is in flight and the native state can be freed.
         controller?.capturePostProcessing?.removeProcessor(attached)
         attached.release()
+        attached.writeDump(filesDir)?.let { Log.i(TAG, "slot input written to $it") }
         processor = null
         controller = null
         Log.i(TAG, "detached: ${attached.summary()}")
@@ -202,7 +211,11 @@ class WebrtcNoiseSuppressionPlugin :
 private class SuppressorFrameProcessor(
     private val suppressor: NoiseSuppressor,
     val model: RnnoiseSuppressor.Model,
+    private val dump: ShortArray? = null,
 ) : AudioProcessingAdapter.ExternalAudioFrameProcessing {
+    private var dumped = 0
+    private var dumpRate = 0
+
     private var initialized = false
     private var processed = 0L
     private var unchanged = 0L
@@ -244,6 +257,16 @@ private class SuppressorFrameProcessor(
         }
         // A frame the engine cannot take comes back unchanged, so the call keeps the audio it
         // would have had without the suppressor.
+        if (dump != null && dumped + numFrames <= dump.size) {
+            if (dumpRate == 0) dumpRate = numFrames * 100
+            // The buffer wraps native memory: read it in native order (Java's default is big endian).
+            // A view object per frame: diagnostics only, never in a normal call.
+            val floats = buffer.duplicate().order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer()
+            for (i in 0 until numFrames) {
+                dump[dumped + i] = floats.get(i).coerceIn(-32768f, 32767f).toInt().toShort()
+            }
+            dumped += numFrames
+        }
         val start = System.nanoTime()
         val result = suppressor.process(buffer, numFrames)
         val spent = System.nanoTime() - start
@@ -299,4 +322,19 @@ private class SuppressorFrameProcessor(
     }
 
     fun release() = suppressor.release()
+
+    /** The dumped slot input as a 16-bit mono WAV in [dir]; null when nothing was dumped. */
+    fun writeDump(dir: java.io.File?): java.io.File? {
+        if (dump == null || dumped == 0 || dir == null) return null
+        val file = java.io.File(dir, "slot-input-${System.currentTimeMillis()}.wav")
+        val data = dumped * 2
+        val out = ByteBuffer.allocate(44 + data).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        out.put("RIFF".toByteArray()).putInt(36 + data).put("WAVE".toByteArray())
+        out.put("fmt ".toByteArray()).putInt(16).putShort(1).putShort(1)
+        out.putInt(dumpRate).putInt(dumpRate * 2).putShort(2).putShort(16)
+        out.put("data".toByteArray()).putInt(data)
+        for (i in 0 until dumped) out.putShort(dump[i])
+        file.writeBytes(out.array())
+        return file
+    }
 }

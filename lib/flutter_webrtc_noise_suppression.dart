@@ -38,8 +38,19 @@ class WebrtcNoiseSuppressionBridge {
   /// Puts a suppressor of [engine] into the slot; one of another engine is taken out first. True
   /// when it is there after the call; false when flutter_webrtc has no audio processing yet or the
   /// suppressor could not be created.
-  Future<bool> attach({WebrtcNoiseSuppressionEngine engine = WebrtcNoiseSuppressionEngine.rnnoise}) async =>
-      await _channel.invokeMethod<bool>('attach', {'engine': engine.wire}) ?? false;
+  ///
+  /// [dumpInputSeconds] is diagnostics, Android only: the first that many seconds of what reaches
+  /// the slot, before the suppressor, are kept and written on detach as a 48 kHz 16-bit WAV into the
+  /// app's external files directory (`adb pull` reads it from a release build).
+  Future<bool> attach({
+    WebrtcNoiseSuppressionEngine engine = WebrtcNoiseSuppressionEngine.rnnoise,
+    int dumpInputSeconds = 0,
+  }) async =>
+      await _channel.invokeMethod<bool>('attach', {
+        'engine': engine.wire,
+        if (dumpInputSeconds > 0) 'dumpInputSeconds': dumpInputSeconds,
+      }) ??
+      false;
 
   /// Runs 3 s of white noise through a fresh suppressor of [engine] on this device, outside the
   /// slot: the time per 10 ms frame and the attenuation. A check that the engine fits the phone's
