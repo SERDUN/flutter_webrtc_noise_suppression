@@ -56,15 +56,38 @@ class WebrtcNoiseSuppressionPlugin :
         result: MethodChannel.Result,
     ) {
         when (call.method) {
-            "attach" -> result.success(attach())
+            "attach" -> {
+                val model = model(call.argument<String>("engine"))
+                if (model == null) {
+                    result.error("unknown_engine", "unknown engine ${call.argument<String>("engine")}", null)
+                } else {
+                    result.success(attach(model))
+                }
+            }
             "detach" -> result.success(detach())
+            "measure" -> {
+                val model = model(call.argument<String>("engine"))
+                if (model == null) {
+                    result.error("unknown_engine", "unknown engine ${call.argument<String>("engine")}", null)
+                } else {
+                    // 3 s of audio is a few hundred ms of work on a slow phone: off the main thread.
+                    Thread {
+                        val measured = measure(model)
+                        android.os.Handler(android.os.Looper.getMainLooper()).post { result.success(measured) }
+                    }.start()
+                }
+            }
             else -> result.notImplemented()
         }
     }
 
-    /** Returns true when a suppressor is in the slot after the call. */
-    private fun attach(): Boolean {
-        if (processor != null) return true
+    /**
+     * Returns true when a suppressor of [model] is in the slot after the call. One of another model
+     * is taken out first: the slot holds one suppressor at a time.
+     */
+    private fun attach(model: RnnoiseSuppressor.Model): Boolean {
+        if (processor?.model == model) return true
+        if (processor != null) detach()
 
         // Looked up at call time: the plugins of an engine are registered in no fixed order.
         val webrtc = engine?.plugins?.get(FlutterWebRTCPlugin::class.java) as? FlutterWebRTCPlugin
@@ -78,7 +101,7 @@ class WebrtcNoiseSuppressionPlugin :
 
         val suppressor =
             try {
-                RnnoiseSuppressor()
+                RnnoiseSuppressor(model)
             } catch (e: Throwable) {
                 // An OutOfMemoryError of the state or a missing native library leaves the call
                 // with the platform processing only, which is what it had before.
@@ -86,12 +109,57 @@ class WebrtcNoiseSuppressionPlugin :
                 return false
             }
 
-        val created = SuppressorFrameProcessor(suppressor)
+        val created = SuppressorFrameProcessor(suppressor, model)
         found.capturePostProcessing.addProcessor(created)
         controller = found
         processor = created
         Log.i(TAG, "attached ${suppressor.engine()}")
         return true
+    }
+
+    /**
+     * Runs 3 s of white noise through a fresh suppressor of [model], frame by frame as the slot
+     * would: the time per frame on this phone and the attenuation once the model has settled (the
+     * first second is skipped). A check of the engine on a device, not of call quality.
+     */
+    private fun measure(model: RnnoiseSuppressor.Model): Map<String, Any> {
+        val suppressor = RnnoiseSuppressor(model)
+        try {
+            suppressor.initialize(RnnoiseSuppressor.sampleRate())
+            val n = RnnoiseSuppressor.frameSize()
+            val frame = ByteBuffer.allocateDirect(n * 4).order(java.nio.ByteOrder.nativeOrder())
+            val floats = frame.asFloatBuffer()
+            val random = java.util.Random(12345)
+            val times = LongArray(300)
+            var inRms = 0.0
+            var outRms = 0.0
+            for (f in 0 until 300) {
+                var before = 0.0
+                for (i in 0 until n) {
+                    val v = 3000f * (random.nextFloat() * 2f - 1f)
+                    floats.put(i, v)
+                    before += v * v
+                }
+                val start = System.nanoTime()
+                suppressor.process(frame, n)
+                times[f] = System.nanoTime() - start
+                if (f >= 100) {
+                    var after = 0.0
+                    for (i in 0 until n) after += floats.get(i).toDouble() * floats.get(i)
+                    inRms += Math.sqrt(before / n)
+                    outRms += Math.sqrt(after / n)
+                }
+            }
+            times.sort()
+            return mapOf(
+                "engine" to suppressor.engine(),
+                "meanUs" to times.average() / 1000.0,
+                "p99Us" to times[(times.size * 99) / 100] / 1000.0,
+                "attenuationDb" to 20 * Math.log10(inRms / outRms),
+            )
+        } finally {
+            suppressor.release()
+        }
     }
 
     /** Returns true when a suppressor was in the slot and has been removed. */
@@ -110,6 +178,14 @@ class WebrtcNoiseSuppressionPlugin :
     private companion object {
         const val TAG = "WebrtcNoiseSuppression"
         const val CHANNEL = "com.portaone.flutter_webrtc_noise_suppression"
+
+        /** The engine names of the Dart API; a missing one is RNNoise v0.1.1. */
+        fun model(engine: String?): RnnoiseSuppressor.Model? =
+            when (engine) {
+                null, "rnnoise" -> RnnoiseSuppressor.Model.V0_1
+                "rnnoise-little" -> RnnoiseSuppressor.Model.LITTLE
+                else -> null
+            }
     }
 }
 
@@ -122,6 +198,7 @@ class WebrtcNoiseSuppressionPlugin :
  */
 private class SuppressorFrameProcessor(
     private val suppressor: NoiseSuppressor,
+    val model: RnnoiseSuppressor.Model,
 ) : AudioProcessingAdapter.ExternalAudioFrameProcessing {
     private var initialized = false
     private var processed = 0L
@@ -171,7 +248,7 @@ private class SuppressorFrameProcessor(
      * or length the engine does not take), and what the slot announced. Read after the processor
      * left the slot, so no frame is counted at the same time.
      */
-    fun summary(): String = "processed=$processed unchanged=$unchanged $announced"
+    fun summary(): String = "${suppressor.engine()} processed=$processed unchanged=$unchanged $announced"
 
     private fun note(event: String) {
         if (announced.length < 400) announced.append('[').append(event).append(']')

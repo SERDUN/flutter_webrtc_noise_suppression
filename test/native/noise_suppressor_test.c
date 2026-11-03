@@ -28,12 +28,12 @@ static float noise_sample(float amplitude) {
   return amplitude * (((float)((seed >> 8) & 0xffff) / 32768.0f) - 1.0f);
 }
 
-int main(void) {
-  CHECK(ns_sample_rate() == 48000, "sample rate is 48000");
-  CHECK(ns_frame_size() == 480, "frame size is 480");
-
-  NsSuppressor* s = ns_create();
+/* The whole contract on one engine. */
+static void check_engine(NsEngine engine) {
+  seed = 12345;
+  NsSuppressor* s = ns_create_engine(engine);
   CHECK(s != NULL, "create");
+  CHECK(ns_suppressor_engine(s) == engine, "engine kept");
 
   float frame[480];
   for (int i = 0; i < 480; i++) frame[i] = 1000.0f;
@@ -58,7 +58,7 @@ int main(void) {
     }
   }
   double attenuation_db = 20.0 * log10(in_rms / (out_rms + 1e-9));
-  printf("white noise attenuation: %.1f dB, last vad %.3f\n", attenuation_db, vad);
+  printf("%s: white noise attenuation: %.1f dB, last vad %.3f\n", ns_engine_name(engine), attenuation_db, vad);
   CHECK(attenuation_db > 10.0, "white noise attenuated by more than 10 dB");
   CHECK(vad >= 0.0f && vad <= 1.0f, "voice probability in 0..1");
 
@@ -67,7 +67,7 @@ int main(void) {
     for (int i = 0; i < 480; i++) frame[i] = 0.0f;
     ns_process(s, 48000, 480, frame, NULL);
   }
-  printf("silence rms after noise: %g\n", rms(frame, 480));
+  printf("%s: silence rms after noise: %g\n", ns_engine_name(engine), rms(frame, 480));
   CHECK(rms(frame, 480) < 10.0, "silence stays below -70 dBFS");
 
   CHECK(ns_reset(s) == 1, "reset");
@@ -76,7 +76,21 @@ int main(void) {
   CHECK(ns_process(s, 48000, 480, frame, NULL) == NS_PROCESSED, "process after reset");
 
   ns_destroy(s);
+
+}
+
+int main(void) {
+  CHECK(ns_sample_rate() == 48000, "sample rate is 48000");
+  CHECK(ns_frame_size() == 480, "frame size is 480");
+  CHECK(ns_create_engine((NsEngine)99) == NULL, "unknown engine refused");
+  CHECK(ns_engine_name((NsEngine)99) == NULL, "unknown engine has no name");
+  NsSuppressor* d = ns_create();
+  CHECK(ns_suppressor_engine(d) == NS_ENGINE_RNNOISE, "ns_create is RNNoise v0.1.1");
+  ns_destroy(d);
   ns_destroy(NULL);
+
+  check_engine(NS_ENGINE_RNNOISE);
+  check_engine(NS_ENGINE_RNNOISE_LITTLE);
 
   if (failures) {
     fprintf(stderr, "%d failure(s)\n", failures);

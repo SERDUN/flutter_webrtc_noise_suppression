@@ -31,27 +31,93 @@ public final class WebrtcNoiseSuppressionPlugin: NSObject, FlutterPlugin {
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     switch call.method {
     case "attach":
-      result(Self.attach())
+      let engine = (call.arguments as? [String: Any])?["engine"] as? String
+      guard let model = Self.model(engine) else {
+        result(FlutterError(code: "unknown_engine", message: "unknown engine \(engine ?? "")", details: nil))
+        return
+      }
+      result(Self.attach(model))
     case "detach":
       result(Self.detach())
+    case "measure":
+      let engine = (call.arguments as? [String: Any])?["engine"] as? String
+      guard let model = Self.model(engine) else {
+        result(FlutterError(code: "unknown_engine", message: "unknown engine \(engine ?? "")", details: nil))
+        return
+      }
+      // 3 s of audio is a few hundred ms of work on a slow phone: off the main thread.
+      DispatchQueue.global(qos: .userInitiated).async {
+        let measured = Self.measure(model)
+        DispatchQueue.main.async { result(measured) }
+      }
     default:
       result(FlutterMethodNotImplemented)
     }
   }
 
-  /// Returns true when a suppressor is in the slot after the call.
-  private static func attach() -> Bool {
-    if processor != nil { return true }
-    guard let suppressor = NSPRnnoiseSuppressor() else {
+  /// The engine names of the Dart API; a missing one is RNNoise v0.1.1.
+  private static func model(_ engine: String?) -> NSPRnnoiseModel? {
+    switch engine {
+    case nil, "rnnoise": return .v01
+    case "rnnoise-little": return .little
+    default: return nil
+    }
+  }
+
+  /// Returns true when a suppressor of `model` is in the slot after the call. One of another model is
+  /// taken out first: the slot holds one suppressor at a time.
+  private static func attach(_ model: NSPRnnoiseModel) -> Bool {
+    if let attached = processor {
+      if attached.model == model { return true }
+      _ = detach()
+    }
+    guard let suppressor = NSPRnnoiseSuppressor(model: model) else {
       // The call keeps the platform processing only, which is what it had before.
       os_log("not attached: suppressor not created", log: log, type: .error)
       return false
     }
-    let created = SuppressorFrameProcessor(suppressor: suppressor)
+    let created = SuppressorFrameProcessor(suppressor: suppressor, model: model)
     AudioManager.sharedInstance().capturePostProcessingAdapter.addProcessing(created)
     processor = created
     os_log("attached %{public}@", log: log, type: .default, suppressor.engine)
     return true
+  }
+
+  /// Runs 3 s of white noise through a fresh suppressor of `model`, frame by frame as the slot would:
+  /// the time per frame on this phone and the attenuation once the model has settled (the first
+  /// second is skipped). A check of the engine on a device, not of call quality.
+  private static func measure(_ model: NSPRnnoiseModel) -> Any {
+    guard let suppressor = NSPRnnoiseSuppressor(model: model) else {
+      return FlutterError(code: "no_engine", message: "suppressor not created", details: nil)
+    }
+    defer { suppressor.releaseEngine() }
+    _ = suppressor.initialize(withSampleRate: NSPRnnoiseSuppressor.sampleRate)
+    let n = NSPRnnoiseSuppressor.frameSize
+    var frame = [Float](repeating: 0, count: n)
+    var seed: UInt32 = 12345
+    var times = [Double]()
+    var inRms = 0.0, outRms = 0.0
+    for f in 0..<300 {
+      for i in 0..<n {
+        seed = seed &* 1103515245 &+ 12345
+        frame[i] = 3000 * (Float((seed >> 8) & 0xffff) / 32768 - 1)
+      }
+      let before = sqrt(frame.reduce(0.0) { $0 + Double($1 * $1) } / Double(n))
+      let start = DispatchTime.now().uptimeNanoseconds
+      _ = frame.withUnsafeMutableBufferPointer { suppressor.processSamples($0.baseAddress!, count: n) }
+      times.append(Double(DispatchTime.now().uptimeNanoseconds - start) / 1000)
+      if f >= 100 {
+        inRms += before
+        outRms += sqrt(frame.reduce(0.0) { $0 + Double($1 * $1) } / Double(n))
+      }
+    }
+    times.sort()
+    return [
+      "engine": suppressor.engine,
+      "meanUs": times.reduce(0, +) / Double(times.count),
+      "p99Us": times[times.count * 99 / 100],
+      "attenuationDb": 20 * log10(inRms / outRms),
+    ] as [String: Any]
   }
 
   /// Returns true when a suppressor was in the slot and has been removed.
@@ -76,14 +142,16 @@ public final class WebrtcNoiseSuppressionPlugin: NSObject, FlutterPlugin {
 /// post-processor runs after the bands were merged back.
 private final class SuppressorFrameProcessor: NSObject, ExternalAudioProcessingDelegate {
   private let suppressor: NSPNoiseSuppressor
+  let model: NSPRnnoiseModel
   private var initialized = false
   private var processed = 0
   private var unchanged = 0
   private var lastResult: NSPNoiseSuppressorResult?
   private var announced = ""
 
-  init(suppressor: NSPNoiseSuppressor) {
+  init(suppressor: NSPNoiseSuppressor, model: NSPRnnoiseModel) {
     self.suppressor = suppressor
+    self.model = model
   }
 
   func audioProcessingInitialize(withSampleRate sampleRateHz: Int, channels: Int) {
@@ -120,7 +188,7 @@ private final class SuppressorFrameProcessor: NSObject, ExternalAudioProcessingD
   /// length the engine does not take), and what the slot announced. Read after the processor left
   /// the slot, so no frame is counted at the same time.
   func summary() -> String {
-    "processed=\(processed) unchanged=\(unchanged) \(announced)"
+    "\(suppressor.engine) processed=\(processed) unchanged=\(unchanged) \(announced)"
   }
 
   func releaseEngine() {

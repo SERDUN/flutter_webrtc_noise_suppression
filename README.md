@@ -1,12 +1,21 @@
 # flutter_webrtc_noise_suppression
 
-A [flutter_webrtc](https://github.com/flutter-webrtc/flutter-webrtc) add-on: noise suppression of the voice an app sends. RNNoise v0.1.1 runs in flutter_webrtc's capture post-processing slot, after the platform's echo cancellation and noise suppression and right before the encoder. Android and iOS. Experimental.
+A [flutter_webrtc](https://github.com/flutter-webrtc/flutter-webrtc) add-on: noise suppression of the voice an app sends. RNNoise runs in flutter_webrtc's capture post-processing slot, after the platform's echo cancellation and noise suppression and right before the encoder. Android and iOS. Experimental.
+
+## Engines
+
+| `WebrtcNoiseSuppressionEngine` | What | Weights | CPU (M5 host, per 10 ms frame) |
+|---|---|---|---|
+| `rnnoise` (default) | RNNoise v0.1.1 | ~90 KB | ~80 us |
+| `rnnoiseLittle` | RNNoise main `70f1d25` (2025) with its little model: much stronger on other voices (babble, a colleague nearby) | ~5.7 MB per ABI | ~185 us |
+
+`measure(engine:)` gives the time per frame and the attenuation on the device it runs on. The two RNNoise versions share global symbol names; the newer one is compiled only through `ios/flutter_webrtc_noise_suppression/Sources/NoiseSuppressionRnnoise2/units/`, which rename its globals (`rnnoise2_prefix.h`), and with its own include path, because both ship an `rnnoise.h`.
 
 ## Inside
 
 | Layer | Where | Knows about |
 |---|---|---|
-| C core: `noise_suppressor.h` over RNNoise (48 kHz, 480-sample frames) | `ios/flutter_webrtc_noise_suppression/Sources/NoiseSuppressionCore` (Android compiles the same files, `android/src/main/cpp`) | nothing |
+| C core: `noise_suppressor.h` over RNNoise (48 kHz, 480-sample frames), engine chosen at creation | `ios/flutter_webrtc_noise_suppression/Sources/NoiseSuppressionCore` and `.../NoiseSuppressionRnnoise2` (Android compiles the same files, `android/src/main/cpp`) | nothing |
 | The suppressor's interface: `NoiseSuppressor` / `RnnoiseSuppressor` (Android, JNI), `NSPNoiseSuppressor` / `NSPRnnoiseSuppressor` (iOS) | `android/src/main/java`, `ios/.../Sources/NoiseSuppression` | the C core only |
 | The add-on: `WebrtcNoiseSuppressionPlugin`, which takes flutter_webrtc's captured frames and hands them to the interface | `android/src/main/kotlin`, `ios/.../Sources/flutter_webrtc_noise_suppression` | flutter_webrtc and the interface |
 | Dart: `WebrtcNoiseSuppressionBridge` (`attach`, `detach`) | `lib/` | the channel |
@@ -44,6 +53,8 @@ await bridge.detach(); // true: it was there and is out
 - **iOS log level.** The two lines a call are os_log's default level: on an iPhone the log stream dropped info lines of this subsystem.
 - **The example's Xcode project.** `flutter create --template=plugin` puts a reference to `ios/flutter_webrtc_noise_suppression` into the example's Runner project, for editing. Xcode then resolves that original `Package.swift`, whose `../flutter_webrtc` exists only in the copy Flutter writes to `build/ios/SourcePackages` (with the paths rewritten to the hashed names git dependencies get), and the build stops with `cannot be accessed`. The reference is removed here; apps never had it.
 - **The example's build directory.** With Swift Package Manager Flutter copies the whole plugin directory, `example/` included, into `example/build/ios/SourcePackages`, so every iOS build nests the copy of the one before it, until a build stops with `Failed to copy plugin ... Assertion failed: (pathbufsz > fts_pathlen)`. Run `flutter clean` in `example/` when that happens. An app that takes the plugin from git has no such directory in its copy.
+- **RNNoise main and x86.** On x86 ABIs (emulators) the newer RNNoise takes its SSE path, which needs `x86/x86cpu.h` and `rnnoise/src` on the include path; run-time CPU detection is off.
+- **RNNoise 0.2 tag.** The `v0.2` tag does not build on ARM or without SIMD (`vec.h` names an `os_support.h` it does not ship); main fixed that, which is one reason main is vendored, not the tag.
 - **RNNoise's global.** RNNoise keeps its FFT state in a global named `common`; every build defines `common=ns_rnnoise_common` so it cannot collide with another library in the process.
 - **RNNoise's first frame.** RNNoise builds its FFT tables with `malloc` on the first frame; `ns_create` runs one frame of silence so that happens off the audio thread. `rnnoise_init` on a live state leaks its buffers; `ns_reset` replaces the state instead (it allocates, so not per frame).
 - iOS 15.0 is the lowest target (Xcode 27 accepts nothing older). The iOS build goes through Swift Package Manager (`ios/flutter_webrtc_noise_suppression/Package.swift` names `../flutter_webrtc`, the sibling Flutter lays out); the podspec has not been built.

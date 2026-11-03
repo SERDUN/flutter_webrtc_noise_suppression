@@ -8,14 +8,14 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   const channel = MethodChannel(WebrtcNoiseSuppressionBridge.channelName);
-  late List<String> calls;
+  late List<MethodCall> calls;
   Object? answer;
 
   setUp(() {
     calls = [];
     answer = true;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
-      calls.add(call.method);
+      calls.add(call);
       return answer;
     });
   });
@@ -29,7 +29,15 @@ void main() {
 
     expect(await bridge.attach(), isTrue);
     expect(await bridge.detach(), isTrue);
-    expect(calls, ['attach', 'detach']);
+    expect(calls.map((c) => c.method), ['attach', 'detach']);
+    expect(calls.first.arguments, {'engine': 'rnnoise'});
+  });
+
+  test('attach names the engine asked for', () async {
+    const bridge = WebrtcNoiseSuppressionBridge();
+
+    await bridge.attach(engine: WebrtcNoiseSuppressionEngine.rnnoiseLittle);
+    expect(calls.single.arguments, {'engine': 'rnnoise-little'});
   });
 
   test('a native side that answers nothing counts as not attached', () async {

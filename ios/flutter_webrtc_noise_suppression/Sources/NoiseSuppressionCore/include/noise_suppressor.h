@@ -5,8 +5,9 @@
  * any other audio stack: a caller that owns an audio pipeline (a bridge to
  * flutter_webrtc, a recorder) hands frames in and gets them back denoised.
  *
- * Engine: RNNoise v0.1.1 (xiph, BSD-3-Clause). It works on 48 kHz mono only,
- * exactly 480 samples (10 ms) per frame, float samples on the int16 scale
+ * Engines (NsEngine), both RNNoise (xiph, BSD-3-Clause): v0.1.1, and the 2025
+ * code of xiph/rnnoise main with its "little" model. Both work on 48 kHz mono
+ * only, exactly 480 samples (10 ms) per frame, float samples on the int16 scale
  * (-32768..32767). A frame of any other shape is left unchanged and the call
  * says so, so the caller can fall back to its own processing.
  *
@@ -25,6 +26,13 @@ extern "C" {
 
 typedef struct NsSuppressor NsSuppressor;
 
+/* The engine a suppressor runs. */
+typedef enum NsEngine {
+  NS_ENGINE_RNNOISE = 0,        /* RNNoise v0.1.1: ~90 KB of weights, the cheapest */
+  NS_ENGINE_RNNOISE_LITTLE = 1  /* RNNoise main (2025), little model: ~5 MB of weights, about 2.3x
+                                   the CPU of v0.1.1, much stronger on other voices */
+} NsEngine;
+
 /* Result of ns_process. */
 typedef enum NsResult {
   NS_PROCESSED = 0,         /* the frame was denoised in place */
@@ -39,8 +47,11 @@ int ns_sample_rate(void);
 /* Samples per frame the engine accepts (10 ms at ns_sample_rate()). */
 int ns_frame_size(void);
 
-/* Engine name and version, a static string, e.g. "rnnoise 0.1.1". */
+/* Name and version of the default engine (NS_ENGINE_RNNOISE), a static string, e.g. "rnnoise 0.1.1". */
 const char* ns_engine(void);
+
+/* Name and version of an engine, a static string; NULL for an unknown one. */
+const char* ns_engine_name(NsEngine engine);
 
 /*
  * Creates a suppressor. Also builds the engine's process-wide tables (RNNoise
@@ -48,6 +59,12 @@ const char* ns_engine(void);
  * audio thread does not allocate. Returns NULL when memory runs out.
  */
 NsSuppressor* ns_create(void);
+
+/* ns_create with a chosen engine. Returns NULL for an unknown engine or when memory runs out. */
+NsSuppressor* ns_create_engine(NsEngine engine);
+
+/* The engine a suppressor runs; NS_ENGINE_RNNOISE for NULL. */
+NsEngine ns_suppressor_engine(const NsSuppressor* suppressor);
 
 /* Frees a suppressor. NULL is ignored. */
 void ns_destroy(NsSuppressor* suppressor);
