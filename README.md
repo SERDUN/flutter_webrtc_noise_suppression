@@ -40,6 +40,7 @@ This plugin is made for flutter_webrtc's fork `portaone/flutter-webrtc` at `po/1
 - **iOS is process-wide.** flutter_webrtc keeps one `AudioManager` for the process: one attached suppressor covers every engine.
 - **The rate.** A processor added while the microphone already runs is never told the rate; the length of the first frame (10 ms) gives it.
 - **iOS log level.** The two lines a call are os_log's default level: on an iPhone the log stream dropped info lines of this subsystem.
+- **The example's Xcode project.** `flutter create --template=plugin` puts a reference to `ios/flutter_webrtc_noise_suppression` into the example's Runner project, for editing. Xcode then resolves that original `Package.swift`, whose `../flutter_webrtc` and `../noise_suppression` exist only in the copy Flutter writes to `build/ios/SourcePackages` (with the paths rewritten to the hashed names git dependencies get), and the build stops with `cannot be accessed`. The reference is removed here; apps never had it.
 - iOS 15.0 is the lowest target (noise_suppression's; Xcode 27 accepts nothing older). The iOS build goes through Swift Package Manager (`ios/flutter_webrtc_noise_suppression/Package.swift` names `../flutter_webrtc` and `../noise_suppression`, the siblings Flutter lays out); the podspec has not been built.
 
 ## Checks
