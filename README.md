@@ -20,10 +20,23 @@ flowchart TB
     slot <--> chain
     subgraph chain [This plugin]
         direction TB
-        processor[ChainProcessor] --> adapter["FormatAdapter<br/>(only for an engine of another rate)"] --> engine["Engine: RNNoise v0.1.1"]
+        processor[ChainProcessor] --> adapter["FormatAdapter<br/>(when the slot's rate is not the engine's)"] --> engine["Engine: RNNoise v0.1.1"]
     end
-    slot --> encoder([Opus encoder]) --> net([Network])
+    slot --> encoder(["Encoder of the negotiated codec<br/>(Opus, G.711, G.722, ...)"]) --> net([Network])
 ```
+
+The slot comes before any encoder, so it works whatever the codec, but **the codec sets the slot's rate**. libwebrtc takes the microphone at the lowest native rate not below the send codec's (`InitializeCaptureFrame` in `audio/audio_transport_impl.cc`: 8 kHz for G.711), and the processing module, whose slot this is, runs at 16, 32 or 48 kHz, never lower (`SuitableProcessRate` in `audio_processing_impl.cc`): 48 kHz for Opus, 16 kHz for G.711 and G.722. RNNoise takes 48 kHz only, so on a 16 kHz call the format adapter interpolates every frame up to 48 kHz, runs RNNoise and decimates back, for 11.5 ms of delay. Measured on a Redmi A5 with a stand party that speaks one codec, before the adapter learned the upward way (run-c5a6a1ecdca94d78714637ff): Opus 48 kHz, 1533 of 1533 frames denoised; PCMU and G.722 16 kHz, 160-sample frames, 10 and 9 denoised, 1502 and 1524 passed unchanged - the suppressor was in the call and did nothing. With the adapter going up, the app on the same three codecs denoised every frame on a Redmi A5 and a Galaxy Tab A (run-1a18abd2807231852bcb732d), and on a PCMU call with noise played into the Redmi the far end's speech-to-pause gap on babble went from 11.2 to 17.4 dB against the switch off (run-0de10e8737adaa705f4f167c, run-ae0a315e235b3d2056d9b173, one run each).
+
+Which rates the slot can see, with the codecs of the built-in factory both platforms of flutter_webrtc 1.6.3 use (`CreateBuiltinAudioEncoderFactory`, libwebrtc m150):
+
+| Send codec | Codec rate | Slot rate | RNNoise |
+|---|---|---|---|
+| Opus (RED carries Opus) | 48 kHz | 48 kHz | as it is |
+| G.722 | 16 kHz | 16 kHz | through the adapter, up and back |
+| G.711 PCMU, PCMA | 8 kHz | 16 kHz (the module never runs lower) | through the adapter, up and back |
+| L16, multichannel Opus | - | - | built in but `NotAdvertised`: never offered in SDP |
+
+iLBC, iSAC and G.729 are not in this build; a far end that insists on one gets a transcoding stand or no call. The microphone's own rate counts too (the lower of the two wins): a Bluetooth headset records at 8 or 16 kHz, so 16 kHz again; with `bypassVoiceProcessing` Android records at the phone's native rate, usually 48 or 44.1 kHz, so 48 kHz. 32 kHz, which the module also runs at, would need a microphone recording at 32 kHz; 48 kHz is not a whole multiple of it, so RNNoise would leave such a call unchanged. No phone seen here does that. G.711 and G.722 were measured on Android only; a Bluetooth call is not measured.
 
 The engine hears the voice after echo cancellation, the platform's noise suppression and gain control, and is the last thing that changes it before the encoder. That is the place an extra denoiser does not hurt echo cancellation; a hook before the processing module (raw microphone samples, as `rtc_rnnoise` on pub.dev takes them) would feed the echo canceller a signal it no longer recognizes.
 
@@ -51,7 +64,7 @@ A probe in the app saw the same on the stand through libwebrtc's processing stat
 2. **Dart to native.** `WebrtcNoiseSuppressionBridge` sends `attach` with the engine names over the method channel `com.portaone.flutter_webrtc_noise_suppression`.
 3. **Engines are made** on the plugin's worker thread from `NoiseSuppressorRegistry`, each wrapped in a `FormatAdapter`.
 4. **Into the slot**, back on the main thread. Android: the Flutter engine's own `FlutterWebRTCPlugin` (never `sharedSingleton`), its `audioProcessingController.capturePostProcessing.addProcessor(...)`; flutter_webrtc gave that adapter to the factory as `ExternalAudioProcessingFactory`, which libwebrtc builds into the processing module with `SetCapturePostProcessing`. iOS: `AudioManager.sharedInstance().capturePostProcessingAdapter.addProcessing(...)`, the delegate of the process-wide `RTCDefaultAudioProcessingModule`.
-5. **Every 10 ms** on the capture thread libwebrtc calls the slot with channel 0 of the full-band buffer: 480 float samples on the int16 scale at 48 kHz (Android: `ExternalAudioProcessor::Process`, a direct `ByteBuffer` over the native samples; iOS: `RTCAudioBuffer.rawBufferForChannel(0)`). The chain runs each engine in place and the frame goes on to the encoder. The slot input written by `dumpInputSeconds` on a Redmi A5 was that: 48 kHz, 480-sample frames.
+5. **Every 10 ms** on the capture thread libwebrtc calls the slot with channel 0 of the full-band buffer, float samples on the int16 scale at the module's rate: 480 at 48 kHz, 160 at 16 kHz (Android: `ExternalAudioProcessor::Process`, a direct `ByteBuffer` over the native samples; iOS: `RTCAudioBuffer.rawBufferForChannel(0)`). The chain runs each engine in place and the frame goes on to the encoder. The slot input written by `dumpInputSeconds` on a Redmi A5 on an Opus call was that: 48 kHz, 480-sample frames.
 6. **Detach** takes the chain out under the adapter's lock, so no frame is in flight when the engines are freed, and logs one line per engine.
 
 On iOS libwebrtc's own adapter of the slot takes its lock with `os_unfair_lock_trylock` and lets a frame through untouched when it cannot (`RTCAudioCustomProcessingAdapter.mm`). That lock is held while the module initializes or releases its delegate (a stream starting, a rate change), not while this plugin attaches: a frame that meets such a moment passes unprocessed.
@@ -62,7 +75,7 @@ On iOS libwebrtc's own adapter of the slot takes its lock with `os_unfair_lock_t
 |---|---|---|---|
 | `rnnoise` (default) | RNNoise v0.1.1 | ~90 KB | ~80 us |
 
-`measure(engine:)` gives the time per frame and the attenuation on the device it runs on: on a Redmi A5 (Android 15 Go) p99 465 us, on a Galaxy Tab A SM-T505 (Android 12) p99 496 us. In a real call, from the detach line, the same engine took p99 1.2 ms per frame on the Redmi A5 and 3.8 ms on the SM-T505, no frame over its 10 ms.
+`measure(engine:)` gives the time per frame and the attenuation on the device it runs on: on a Redmi A5 (Android 15 Go) p99 465 us, on a Galaxy Tab A SM-T505 (Android 12) p99 496 us. In a real call, from the detach line, the same engine took p99 1.2 ms per frame on the Redmi A5 and 3.8 ms on the SM-T505 on Opus, no frame over its 10 ms; on a 16 kHz call, through the adapter, p99 1.4-1.8 ms and 4.6-6.2 ms, one frame of about 1500 over 10 ms on the SM-T505.
 
 RNNoise main's little model and DeepFilterNet 3 were measured for this slot and not taken (little takes the voice down under babble; DeepFilterNet 3 misses frames on the SM-T505 and costs about 19 MB per ABI). Either can come back as an engine of the plugin, as below.
 
@@ -83,7 +96,7 @@ What the pull request adds:
 
 What it does not touch: `WebrtcNoiseSuppressionPlugin` on either platform, the chain, the detach lines, the threading. In particular:
 
-- **Its format.** An engine that works at another rate or frame length says so (`engineSampleRateHz()` / `engineFrameSize()` on Android, `engineSampleRate` / `engineFrameSize` on iOS; 0 or absent means the slot's own, 48 kHz in 10 ms frames). The add-on puts `FormatAdapter` in front of it: a windowed-sinc low-pass, decimation by a whole factor (48 kHz to 16 kHz is 3), the engine's own frames gathered, interpolation back. That costs one engine frame and the filters in delay (11.6 ms for 16 kHz in 10 ms frames; `measure` reports it as `latencyMs`). A rate 48 kHz does not divide by a whole number is not taken: its frames pass unchanged.
+- **Its format.** An engine that works at another rate or frame length says so (`engineSampleRateHz()` / `engineFrameSize()` on Android, `engineSampleRate` / `engineFrameSize` on iOS; 0 or absent means the slot's own, 48 kHz in 10 ms frames). The add-on puts `FormatAdapter` in front of it, which works both ways. An engine below the slot's rate: a windowed-sinc low-pass, decimation by a whole factor (48 kHz to 16 kHz is 3), the engine's own frames gathered, interpolation back. An engine above it (RNNoise at 48 kHz on a 16 kHz call): interpolation up, the engine's frames, decimation back. Either costs one engine frame and the filters in delay (11.6 ms for a 16 kHz engine on a 48 kHz call, `measure` reports it as `latencyMs`; 11.5 ms for RNNoise on a 16 kHz call). Rates of no whole ratio are not taken: their frames pass unchanged.
 - **Its cost.** The factory runs on the plugin's worker thread, so a model may take its time to load. `process` runs on the capture thread every 10 ms and must not allocate.
 - **A chain.** `attach(engines: [a, b])` runs every frame through `a`, then `b`, in place. One chain is in the slot at a time; the next `attach` replaces it, the same chain again is left as it is.
 
@@ -132,7 +145,7 @@ final m = await bridge.measure(); // 3 s of white noise through a fresh engine, 
 print(m); // rnnoise 0.1.1: mean 331 us, p99 465 us, attenuation 15.1 dB
 ```
 
-Diagnostics, Android only: `attach(dumpInputSeconds: 300)` keeps the first that many seconds of what reaches the slot, before the suppressor, in a buffer allocated at attach, and writes it on detach as a 48 kHz 16-bit WAV, `slot-input-<ms>.wav`, into the app's external files directory (`adb pull /sdcard/Android/data/<package>/files/...` reads it from a release build). The file stays until it is removed.
+Diagnostics, Android only: `attach(dumpInputSeconds: 300)` keeps what reaches the slot, before the suppressor, in a buffer of that many seconds at 48 kHz allocated at attach, and writes it on detach as a 16-bit WAV at the slot's rate, `slot-input-<ms>.wav`; when the rate changes (a call settling on G.711 drops from 48 to 16 kHz) it starts again at the new rate, so the file is the call after its first frames, into the app's external files directory (`adb pull /sdcard/Android/data/<package>/files/...` reads it from a release build). The file stays until it is removed.
 
 ## Requirements
 
@@ -143,15 +156,15 @@ Diagnostics, Android only: `attach(dumpInputSeconds: 300)` keeps the first that 
 - **Android engines.** Each Flutter engine has its own flutter_webrtc plugin. Each engine also gets its own instance of this plugin, which reaches the flutter_webrtc of that engine, never `FlutterWebRTCPlugin.sharedSingleton`: that names the engine created last, and in an app with background engines (push, call services) it may be one whose factory is never initialized.
 - **Android libwebrtc.** `AudioProcessingAdapter` extends libwebrtc's `ExternalAudioProcessingFactory.AudioProcessing`, and flutter_webrtc takes libwebrtc as `implementation`, so `android/build.gradle` names it `compileOnly` at upstream 1.6.3's version (`io.github.webrtc-sdk:android:150.7871.04`). Only the `AudioProcessing` interface is used, and the app's flutter_webrtc brings the libwebrtc that runs.
 - **iOS is process-wide.** flutter_webrtc keeps one `AudioManager` for the process: one attached chain covers every Flutter engine.
-- **ART before the JIT.** The first frames through a fresh format adapter took up to 12 ms on a Galaxy Tab A (SM-T505) against 0.5 ms once compiled. The plugin runs the adapter over a second of silence once per process, on the worker, before an adapted engine reaches the slot.
+- **ART before the JIT.** The first frames through a fresh format adapter took up to 12 ms on a Galaxy Tab A (SM-T505) against 0.5 ms once compiled. The plugin runs the adapter over a second of silence both ways (down and up) once per process, on the worker, before an engine reaches the slot.
 - **Swift in debug builds.** Plain Swift loops over arrays took 2.5 ms a frame on an iPhone in a debug build; the iOS adapter's filters run on Accelerate (`vDSP_dotpr`) over flat buffers instead, 0.2 ms.
-- **The rate.** A processor added while the microphone already runs is never told the rate; the length of the first frame (10 ms) gives it.
+- **The rate.** A processor added while the microphone already runs is never told the rate; the length of the first frame (10 ms) gives it. The rate also changes during a call: it starts at 48 kHz and drops to 16 kHz when the send codec turns out to be G.711 or G.722 (`initialize(16000, 1)` in the detach line).
 - **iOS log level.** The two lines a call are os_log's default level: on an iPhone the log stream dropped info lines of this subsystem.
 - **The example's Xcode project.** `flutter create --template=plugin` puts a reference to `ios/flutter_webrtc_noise_suppression` into the example's Runner project, for editing. Xcode then resolves that original `Package.swift`, whose `../flutter_webrtc` exists only in the copy Flutter writes to `build/ios/SourcePackages` (with the paths rewritten to the hashed names git dependencies get), and the build stops with `cannot be accessed`. The reference is removed here; apps never had it.
-- **The example's build directory.** With Swift Package Manager Flutter copies the whole plugin directory, `example/` included, into `example/build/ios/SourcePackages`, so every iOS build nests the copy of the one before it, until a build stops with `Failed to copy plugin ... Assertion failed: (pathbufsz > fts_pathlen)`. Run `flutter clean` in `example/` when that happens. An app that takes the plugin from git has no such directory in its copy.
+- **The example's build directory.** With Swift Package Manager Flutter copies the whole plugin directory, `example/` included, into `example/build/ios/SourcePackages`, so every iOS build nests the copy of the one before it, until a build stops with `Failed to copy plugin ... Assertion failed: (pathbufsz > fts_pathlen)`. Run `flutter clean` in `example/` when that happens; it happens on an Android build too, so the second phone of a run nests the first one's copy (portaone-qa's `flutter-package-test.sh` removes it before each phone). An app that takes the plugin from git has no such directory in its copy.
 - **RNNoise's global.** RNNoise keeps its FFT state in a global named `common`; every build defines `common=ns_rnnoise_common` so it cannot collide with another library in the process.
 - **RNNoise's first frame.** RNNoise builds its FFT tables with `malloc` on the first frame; `ns_create` runs one frame of silence so that happens off the audio thread. `rnnoise_init` on a live state leaks its buffers; `ns_reset` replaces the state instead (it allocates, so not per frame).
-- iOS 15.0 is the lowest target (Xcode 27 accepts nothing older). The iOS build goes through Swift Package Manager (`ios/flutter_webrtc_noise_suppression/Package.swift` names `../flutter_webrtc`, the sibling Flutter lays out); the podspec has not been built.
+- iOS 15.0 is the lowest target (Xcode 27 accepts nothing older). The iOS build goes through Swift Package Manager (`ios/flutter_webrtc_noise_suppression/Package.swift` names `../flutter_webrtc`, the sibling Flutter lays out) or CocoaPods. With CocoaPods all sources are one module, so the Swift files import `NoiseSuppression` only when it exists, and the pod is a static framework because flutter_webrtc's is; on Xcode 27 an app's Podfile also has to raise the deployment target of pods that ask for less than 15.0, flutter_webrtc among them.
 
 ## Checks
 
@@ -160,8 +173,9 @@ make test                 # the C core on the host: white noise attenuated by mo
 flutter analyze && flutter test
 cd example/android && ./gradlew :flutter_webrtc_noise_suppression:testDebugUnitTest   # the format adapter and the registry on the JVM (JDK 17-21)
 cd example && flutter test integration_test   # on a device: attach and detach, a chain with the test engine, an unknown engine, an attach overtaken, measure of both
-cd example/ios && xcodebuild test -workspace Runner.xcworkspace -scheme Runner \
-  -destination 'platform=iOS Simulator,name=<iPhone>' -only-testing:RunnerTests
+cd example && flutter build ios --config-only --debug && cd ios && xcodebuild test -workspace Runner.xcworkspace \
+  -scheme Runner -destination id=<iPhone udid> -only-testing:RunnerTests DEVELOPMENT_TEAM=<team> -allowProvisioningUpdates
+# the format adapter in Swift and the suppressor on an iPhone; the simulator build of the example fails on Flutter.framework's architectures on m2
 ```
 
 ## License

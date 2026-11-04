@@ -1,5 +1,5 @@
-# CocoaPods build of the add-on. Not built yet: the apps it was made for take their plugins through
-# Swift Package Manager (flutter_webrtc_noise_suppression/Package.swift).
+# CocoaPods build of the add-on; Swift Package Manager builds it from
+# flutter_webrtc_noise_suppression/Package.swift.
 Pod::Spec.new do |s|
   s.name             = 'flutter_webrtc_noise_suppression'
   s.version          = '0.0.1'
@@ -15,6 +15,8 @@ Pod::Spec.new do |s|
   ]
   s.dependency 'Flutter'
   s.dependency 'flutter_webrtc'
+  # flutter_webrtc is a static framework: a dynamic pod over it is refused by `pod install`.
+  s.static_framework = true
   s.platform         = :ios, '15.0'
   s.swift_version    = '5.0'
   s.pod_target_xcconfig = {

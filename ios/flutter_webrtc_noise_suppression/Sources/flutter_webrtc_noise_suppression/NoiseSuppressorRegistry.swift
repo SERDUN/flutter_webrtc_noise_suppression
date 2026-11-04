@@ -1,5 +1,8 @@
 import Foundation
-import NoiseSuppression
+#if canImport(NoiseSuppression)
+  // Swift Package Manager builds it as a module of its own; CocoaPods builds one module of all.
+  import NoiseSuppression
+#endif
 
 /// The engines `attach` and `measure` can name, each by the name the Dart side sends.
 ///

@@ -128,6 +128,64 @@ class RunnerTests: XCTestCase {
     XCTAssertGreaterThan(bestCorrelation(out, sine(440), maxLag: adapter.latencySamples + 48).1, 0.9999)
   }
 
+  private func runAt(_ adapter: FormatAdapter, rate: Int, seconds: Int, _ signal: (Int) -> Float) -> [Float] {
+    let n = rate / 100
+    var out = [Float]()
+    var frame = [Float](repeating: 0, count: n)
+    for f in 0..<(seconds * 100) {
+      for i in 0..<n { frame[i] = signal(f * n + i) }
+      let result = frame.withUnsafeMutableBufferPointer { adapter.processSamples($0.baseAddress!, count: n) }
+      XCTAssertEqual(result, .processed)
+      out += frame
+    }
+    return out
+  }
+
+  private func sineAt(_ hz: Double, _ rate: Int) -> (Int) -> Float {
+    { t in Float(10_000 * sin(2 * .pi * hz * Double(t) / Double(rate))) }
+  }
+
+  private func correlationAt(_ out: [Float], _ signal: (Int) -> Float, maxLag: Int) -> (Int, Double) {
+    var best = (0, -1.0)
+    for lag in 0...maxLag {
+      var xy = 0.0, xx = 0.0, yy = 0.0
+      for i in (out.count / 2)..<out.count {
+        let x = Double(signal(i - lag))
+        xy += x * Double(out[i])
+        xx += x * x
+        yy += Double(out[i]) * Double(out[i])
+      }
+      let c = xy / sqrt(xx * yy)
+      if c > best.1 { best = (lag, c) }
+    }
+    return best
+  }
+
+  func testA48kHzEngineOnA16kHzStreamGetsItsFramesAndTheVoiceComesBack() {
+    // A call on G.711 or G.722: libwebrtc's slot runs at 16 kHz, RNNoise takes 48 kHz.
+    let engine = Identity(48_000, 480)
+    let adapter = FormatAdapter(engine)
+    XCTAssertTrue(adapter.initialize(withSampleRate: 16_000))
+    let out = runAt(adapter, rate: 16_000, seconds: 2, sineAt(1000, 16_000))
+    XCTAssertEqual(engine.lengths, [480])
+    let (lag, corr) = correlationAt(out, sineAt(1000, 16_000), maxLag: adapter.latencySamples + 16)
+    XCTAssertGreaterThan(corr, 0.9999, "lag \(lag)")
+    XCTAssertLessThanOrEqual(lag, adapter.latencySamples)
+    XCTAssertEqual(adapter.latencySamples, (480 + 73 - 1) / 3)
+    let tail = out[(out.count / 2)...]
+    let rms = sqrt(tail.reduce(0.0) { $0 + Double($1) * Double($1) } / Double(tail.count))
+    XCTAssertEqual(20 * log10(rms / (10_000 / sqrt(2))), 0, accuracy: 0.2)
+  }
+
+  func testA48kHzEngineOnAn8kHzStreamWorksToo() {
+    let engine = Identity(48_000, 480)
+    let adapter = FormatAdapter(engine)
+    XCTAssertTrue(adapter.initialize(withSampleRate: 8_000))
+    let out = runAt(adapter, rate: 8_000, seconds: 2, sineAt(440, 8_000))
+    XCTAssertEqual(engine.lengths, [480])
+    XCTAssertGreaterThan(correlationAt(out, sineAt(440, 8_000), maxLag: adapter.latencySamples + 8).1, 0.9999)
+  }
+
   func testWhatTheLowerRateCannotCarryIsFilteredOut() {
     let adapter = FormatAdapter(Identity(16_000, 160))
     XCTAssertTrue(adapter.initialize(withSampleRate: 48_000))
