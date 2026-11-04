@@ -38,6 +38,16 @@ typedef NS_ENUM(NSInteger, NSPNoiseSuppressorResult) {
 /// Frees the engine. The instance is not usable after this.
 - (void)releaseEngine;
 
+@optional
+
+/// The rate the engine works at, Hz, or 0 (or not implemented) when it takes the stream's own rate.
+/// The add-on reaches a rate the stream's divides by a whole number by resampling.
+@property(nonatomic, readonly) NSInteger engineSampleRate;
+
+/// Samples per frame the engine takes at engineSampleRate, or 0 (or not implemented) for frames of
+/// 10 ms. The add-on gathers the stream into frames of this length.
+@property(nonatomic, readonly) NSInteger engineFrameSize;
+
 @end
 
 NS_ASSUME_NONNULL_END
