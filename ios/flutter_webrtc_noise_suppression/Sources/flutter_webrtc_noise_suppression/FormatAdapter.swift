@@ -1,6 +1,9 @@
 import Accelerate
 import Foundation
-import NoiseSuppression
+#if canImport(NoiseSuppression)
+  // Swift Package Manager builds it as a module of its own; CocoaPods builds one module of all.
+  import NoiseSuppression
+#endif
 
 /// Puts an engine that works at another rate or frame length into the slot's 10 ms frames.
 ///
