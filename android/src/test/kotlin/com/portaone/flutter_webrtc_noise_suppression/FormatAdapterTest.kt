@@ -135,6 +135,80 @@ class FormatAdapterTest {
         assertTrue("correlation $corr", corr > 0.9999)
     }
 
+    /** [seconds] of [signal] at [rate] through [adapter] in 10 ms frames. */
+    private fun runAt(
+        adapter: NoiseSuppressor,
+        rate: Int,
+        seconds: Int,
+        signal: (Int) -> Float,
+    ): FloatArray {
+        val n = rate / 100
+        val frame = ByteBuffer.allocateDirect(n * 4).order(ByteOrder.nativeOrder())
+        val out = FloatArray(seconds * rate)
+        for (f in 0 until seconds * 100) {
+            for (i in 0 until n) frame.putFloat(4 * i, signal(f * n + i))
+            frame.position(0)
+            assertEquals(NoiseSuppressor.Result.PROCESSED, adapter.process(frame, n))
+            for (i in 0 until n) out[f * n + i] = frame.getFloat(4 * i)
+        }
+        return out
+    }
+
+    private fun sineAt(
+        hz: Double,
+        rate: Int,
+    ) = { t: Int -> (10_000 * Math.sin(2 * Math.PI * hz * t / rate)).toFloat() }
+
+    private fun correlationAt(
+        out: FloatArray,
+        signal: (Int) -> Float,
+        maxLag: Int,
+    ): Pair<Int, Double> {
+        var best = 0 to -1.0
+        for (lag in 0..maxLag) {
+            var xy = 0.0
+            var xx = 0.0
+            var yy = 0.0
+            for (i in out.size / 2 until out.size) {
+                val x = signal(i - lag).toDouble()
+                xy += x * out[i]
+                xx += x * x
+                yy += out[i].toDouble() * out[i]
+            }
+            val c = xy / Math.sqrt(xx * yy)
+            if (c > best.second) best = lag to c
+        }
+        return best
+    }
+
+    @Test
+    fun a48kHzEngineOnA16kHzStreamGetsItsFramesAndTheVoiceComesBack() {
+        // A call on G.711 or G.722: libwebrtc's slot runs at 16 kHz, RNNoise takes 48 kHz.
+        val engine = Identity(48_000, 480)
+        val adapter = FormatAdapter(engine)
+        assertTrue(adapter.initialize(16_000))
+        assertEquals(48_000, engine.initializedAt)
+        val out = runAt(adapter, 16_000, 2, sineAt(1000.0, 16_000))
+        assertEquals(setOf(480), engine.lengths)
+        val (lag, corr) = correlationAt(out, sineAt(1000.0, 16_000), adapter.latencySamples + 16)
+        assertTrue("correlation $corr at lag $lag", corr > 0.9999)
+        assertTrue("lag $lag within ${adapter.latencySamples}", lag <= adapter.latencySamples)
+        val gainDb = 20 * Math.log10(rms(out, out.size / 2) / (10_000 / Math.sqrt(2.0)))
+        assertEquals("gain $gainDb dB", 0.0, gainDb, 0.2)
+        assertEquals("one engine frame and the filters", (480 + 73 - 1) / 3, adapter.latencySamples)
+    }
+
+    @Test
+    fun a48kHzEngineOnAn8kHzStreamWorksToo() {
+        val engine = Identity(48_000, 480)
+        val adapter = FormatAdapter(engine)
+        assertTrue(adapter.initialize(8_000))
+        val out = runAt(adapter, 8_000, 2, sineAt(440.0, 8_000))
+        assertEquals(setOf(480), engine.lengths)
+        val (_, corr) = correlationAt(out, sineAt(440.0, 8_000), adapter.latencySamples + 8)
+        assertTrue("correlation $corr", corr > 0.9999)
+    }
+
     @Test
     fun whatTheLowerRateCannotCarryIsFilteredOut() {
         val adapter = FormatAdapter(Identity(16_000, 160))
