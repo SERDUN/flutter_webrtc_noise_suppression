@@ -2,8 +2,20 @@ package com.portaone.flutter_webrtc_noise_suppression;
 
 import java.nio.ByteBuffer;
 
-/** {@link NoiseSuppressor} on RNNoise v0.1.1: 48 kHz mono, 480 samples per frame. */
+/** {@link NoiseSuppressor} on RNNoise: 48 kHz mono, 480 samples per frame. */
 public final class RnnoiseSuppressor implements NoiseSuppressor {
+  /** The RNNoise build and model a suppressor runs; the ids are the C core's NsEngine. */
+  public enum Model {
+    /** RNNoise v0.1.1. */
+    V0_1(0);
+
+    final int id;
+
+    Model(int id) {
+      this.id = id;
+    }
+  }
+
   static {
     System.loadLibrary("flutter_webrtc_noise_suppression");
   }
@@ -13,15 +25,28 @@ public final class RnnoiseSuppressor implements NoiseSuppressor {
   private long handle;
   private int sampleRateHz;
 
-  /** @throws OutOfMemoryError when the engine state cannot be allocated. */
+  private final Model model;
+
+  /** RNNoise v0.1.1. @throws OutOfMemoryError when the engine state cannot be allocated. */
   public RnnoiseSuppressor() {
-    handle = nativeCreate();
+    this(Model.V0_1);
+  }
+
+  /** @throws OutOfMemoryError when the engine state cannot be allocated. */
+  public RnnoiseSuppressor(Model model) {
+    this.model = model;
+    handle = nativeCreate(model.id);
     if (handle == 0) throw new OutOfMemoryError("noise suppressor state");
+  }
+
+  /** The model this suppressor runs. */
+  public Model model() {
+    return model;
   }
 
   @Override
   public String engine() {
-    return nativeEngine();
+    return nativeEngine(model.id);
   }
 
   @Override
@@ -58,7 +83,7 @@ public final class RnnoiseSuppressor implements NoiseSuppressor {
     return nativeSampleRate();
   }
 
-  private static native long nativeCreate();
+  private static native long nativeCreate(int engine);
 
   private static native void nativeDestroy(long handle);
 
@@ -67,7 +92,7 @@ public final class RnnoiseSuppressor implements NoiseSuppressor {
   private static native int nativeProcess(
       long handle, int sampleRateHz, int numSamples, ByteBuffer frame, int byteOffset);
 
-  private static native String nativeEngine();
+  private static native String nativeEngine(int engine);
 
   private static native int nativeFrameSize();
 

@@ -1,15 +1,25 @@
 # flutter_webrtc_noise_suppression
 
-A [flutter_webrtc](https://github.com/flutter-webrtc/flutter-webrtc) add-on: noise suppression of the voice an app sends. RNNoise v0.1.1 runs in flutter_webrtc's capture post-processing slot, after the platform's echo cancellation and noise suppression and right before the encoder. Android and iOS. Experimental.
+A [flutter_webrtc](https://github.com/flutter-webrtc/flutter-webrtc) add-on: noise suppression of the voice an app sends. RNNoise runs in flutter_webrtc's capture post-processing slot, after the platform's echo cancellation and noise suppression and right before the encoder. Android and iOS. Experimental.
+
+## Engines
+
+| `WebrtcNoiseSuppressionEngine` | What | Weights | CPU (M5 host, per 10 ms frame) |
+|---|---|---|---|
+| `rnnoise` (default) | RNNoise v0.1.1 | ~90 KB | ~80 us |
+
+`measure(engine:)` gives the time per frame and the attenuation on the device it runs on: on a Redmi A5 (Android 15 Go) p99 465 us, on a Galaxy Tab A SM-T505 (Android 12) p99 496 us. In a real call, from the detach line, the same engine took p99 1.2 ms per frame on the Redmi A5 and 3.8 ms on the SM-T505, no frame over its 10 ms.
+
+The engine parameter stays for the next engine: RNNoise main's little model and DeepFilterNet 3 were measured for this slot and not taken (little takes the voice down under babble; DeepFilterNet 3 misses frames on the SM-T505 and costs about 19 MB per ABI).
 
 ## Inside
 
 | Layer | Where | Knows about |
 |---|---|---|
-| C core: `noise_suppressor.h` over RNNoise (48 kHz, 480-sample frames) | `ios/flutter_webrtc_noise_suppression/Sources/NoiseSuppressionCore` (Android compiles the same files, `android/src/main/cpp`) | nothing |
+| C core: `noise_suppressor.h` over RNNoise (48 kHz, 480-sample frames), engine chosen at creation | `ios/flutter_webrtc_noise_suppression/Sources/NoiseSuppressionCore` (Android compiles the same files, `android/src/main/cpp`) | nothing |
 | The suppressor's interface: `NoiseSuppressor` / `RnnoiseSuppressor` (Android, JNI), `NSPNoiseSuppressor` / `NSPRnnoiseSuppressor` (iOS) | `android/src/main/java`, `ios/.../Sources/NoiseSuppression` | the C core only |
 | The add-on: `WebrtcNoiseSuppressionPlugin`, which takes flutter_webrtc's captured frames and hands them to the interface | `android/src/main/kotlin`, `ios/.../Sources/flutter_webrtc_noise_suppression` | flutter_webrtc and the interface |
-| Dart: `WebrtcNoiseSuppressionBridge` (`attach`, `detach`) | `lib/` | the channel |
+| Dart: `WebrtcNoiseSuppressionBridge` (`attach`, `detach`, `measure`) | `lib/` | the channel |
 
 The add-on works with the suppressor only through its interface, so another engine is another implementation of `NoiseSuppressor` and the add-on does not change. flutter_webrtc is reached through its public interfaces: `AudioProcessingAdapter.ExternalAudioFrameProcessing` on Android, `ExternalAudioProcessingDelegate` and `AudioManager.capturePostProcessingAdapter` on iOS. Nothing is looked up by name, and nothing goes into the app's `MainActivity` or `AppDelegate`: the plugin is registered by `GeneratedPluginRegistrant` like any other.
 
@@ -29,7 +39,22 @@ await bridge.attach(); // true: the suppressor is in the slot; every call's micr
 await bridge.detach(); // true: it was there and is out
 ```
 
-`attach` returns false when flutter_webrtc has not built its factory yet (it does on its first use: `getUserMedia`, `createPeerConnection`) or the suppressor cannot be created; the audio is then left as it was. Attach when the microphone track opens and detach when it stops. On detach the native side logs one line: `detached: processed=N unchanged=M [what the slot announced]` (logcat tag `WebrtcNoiseSuppression`, os_log subsystem `com.portaone.flutter_webrtc_noise_suppression`).
+`attach` returns false when flutter_webrtc has not built its factory yet (it does on its first use: `getUserMedia`, `createPeerConnection`) or the suppressor cannot be created; the audio is then left as it was. Attach when the microphone track opens and detach when it stops.
+
+The native side logs two lines a call (logcat tag `WebrtcNoiseSuppression`, os_log subsystem `com.portaone.flutter_webrtc_noise_suppression`): `attached rnnoise 0.1.1` and, on detach, the call's frames and their time:
+
+```
+detached: rnnoise 0.1.1 processed=22581 unchanged=0 mean_us=818 p99_us=1200 max_us=3757 over_10ms=0 [initialize(48000, 1)][PROCESSED at frame 1 (480 samples, 3 bands)]
+```
+
+`unchanged` counts frames the engine could not take (another rate or length), left as they were; the percentile is read from 200 us buckets; `over_10ms` is the frames that took longer than the 10 ms they hold.
+
+```dart
+final m = await bridge.measure(); // 3 s of white noise through a fresh suppressor, outside the slot
+print(m); // rnnoise 0.1.1: mean 331 us, p99 465 us, attenuation 15.1 dB
+```
+
+Diagnostics, Android only: `attach(dumpInputSeconds: 300)` keeps the first that many seconds of what reaches the slot, before the suppressor, in a buffer allocated at attach, and writes it on detach as a 48 kHz 16-bit WAV, `slot-input-<ms>.wav`, into the app's external files directory (`adb pull /sdcard/Android/data/<package>/files/...` reads it from a release build). The file stays until it is removed.
 
 ## Requirements
 
@@ -53,7 +78,7 @@ await bridge.detach(); // true: it was there and is out
 ```sh
 make test                 # the C core on the host: white noise attenuated by more than 10 dB, bad frames untouched
 flutter analyze && flutter test
-cd example && flutter test integration_test   # on a device: attach, attach again, detach, detach again
+cd example && flutter test integration_test   # on a device: attach, attach again, detach, detach again; measure within the 10 ms budget
 cd example/ios && xcodebuild test -workspace Runner.xcworkspace -scheme Runner \
   -destination 'platform=iOS Simulator,name=<iPhone>' -only-testing:RunnerTests
 ```

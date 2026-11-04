@@ -5,8 +5,8 @@
 
 #define JNI_FN(name) Java_com_portaone_flutter_1webrtc_1noise_1suppression_RnnoiseSuppressor_##name
 
-JNIEXPORT jlong JNICALL JNI_FN(nativeCreate)(JNIEnv* env, jclass cls) {
-  return (jlong)(intptr_t)ns_create();
+JNIEXPORT jlong JNICALL JNI_FN(nativeCreate)(JNIEnv* env, jclass cls, jint engine) {
+  return (jlong)(intptr_t)ns_create_engine((NsEngine)engine);
 }
 
 JNIEXPORT void JNICALL JNI_FN(nativeDestroy)(JNIEnv* env, jclass cls, jlong handle) {
@@ -25,8 +25,9 @@ JNIEXPORT jint JNICALL JNI_FN(nativeProcess)(JNIEnv* env, jclass cls, jlong hand
                           (float*)(base + byte_offset), NULL);
 }
 
-JNIEXPORT jstring JNICALL JNI_FN(nativeEngine)(JNIEnv* env, jclass cls) {
-  return (*env)->NewStringUTF(env, ns_engine());
+JNIEXPORT jstring JNICALL JNI_FN(nativeEngine)(JNIEnv* env, jclass cls, jint engine) {
+  const char* name = ns_engine_name((NsEngine)engine);
+  return name == NULL ? NULL : (*env)->NewStringUTF(env, name);
 }
 
 JNIEXPORT jint JNICALL JNI_FN(nativeFrameSize)(JNIEnv* env, jclass cls) { return ns_frame_size(); }

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -24,5 +25,22 @@ void main() {
     expect(await bridge.detach(), isFalse, reason: 'nothing left to take out');
 
     await pc.close();
+  });
+
+  testWidgets('every engine runs on this device within the frame budget', (
+    tester,
+  ) async {
+    const bridge = WebrtcNoiseSuppressionBridge();
+    for (final engine in WebrtcNoiseSuppressionEngine.values) {
+      final m = await bridge.measure(engine: engine);
+      // The line a device run is read for: the time per frame on this phone.
+      debugPrint('measure: $m');
+      expect(m.attenuationDb, greaterThan(10), reason: '$m');
+      expect(
+        m.p99Us,
+        lessThan(10000),
+        reason: 'a 10 ms frame must take less than 10 ms: $m',
+      );
+    }
   });
 }
