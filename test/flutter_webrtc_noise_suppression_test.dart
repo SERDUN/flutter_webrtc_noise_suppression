@@ -36,8 +36,8 @@ void main() {
   test('attach names the engine asked for', () async {
     const bridge = WebrtcNoiseSuppressionBridge();
 
-    await bridge.attach(engine: WebrtcNoiseSuppressionEngine.rnnoiseLittle);
-    expect(calls.single.arguments, {'engine': 'rnnoise-little'});
+    await bridge.attach(engine: WebrtcNoiseSuppressionEngine.rnnoise);
+    expect(calls.single.arguments, {'engine': 'rnnoise'});
   });
 
   test('a native side that answers nothing counts as not attached', () async {

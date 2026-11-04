@@ -195,7 +195,6 @@ class WebrtcNoiseSuppressionPlugin :
         fun model(engine: String?): RnnoiseSuppressor.Model? =
             when (engine) {
                 null, "rnnoise" -> RnnoiseSuppressor.Model.V0_1
-                "rnnoise-little" -> RnnoiseSuppressor.Model.LITTLE
                 else -> null
             }
     }

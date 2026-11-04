@@ -90,7 +90,6 @@ int main(void) {
   ns_destroy(NULL);
 
   check_engine(NS_ENGINE_RNNOISE);
-  check_engine(NS_ENGINE_RNNOISE_LITTLE);
 
   if (failures) {
     fprintf(stderr, "%d failure(s)\n", failures);

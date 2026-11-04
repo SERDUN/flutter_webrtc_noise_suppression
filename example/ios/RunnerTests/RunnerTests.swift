@@ -38,10 +38,6 @@ class RunnerTests: XCTestCase {
     denoisesWhiteNoise(.v0_1)
   }
 
-  func testRnnoiseLittleSuppressorDenoisesWhiteNoise() {
-    denoisesWhiteNoise(.little)
-  }
-
   private func denoisesWhiteNoise(_ model: NSPRnnoiseModel) {
     guard let suppressor = NSPRnnoiseSuppressor(model: model) else {
       return XCTFail("no engine state")
