@@ -20,10 +20,12 @@ flowchart TB
     slot <--> chain
     subgraph chain [This plugin]
         direction TB
-        processor[ChainProcessor] --> adapter["FormatAdapter<br/>(only for an engine of another rate)"] --> engine["Engine: RNNoise v0.1.1"]
+        processor[ChainProcessor] --> adapter["FormatAdapter<br/>(when the slot's rate is not the engine's)"] --> engine["Engine: RNNoise v0.1.1"]
     end
-    slot --> encoder([Opus encoder]) --> net([Network])
+    slot --> encoder(["Encoder of the negotiated codec<br/>(Opus, G.711, G.722, ...)"]) --> net([Network])
 ```
+
+The slot comes before any encoder, so it works whatever the codec, but **the codec sets the slot's rate**. libwebrtc takes the microphone at the lowest native rate not below the send codec's (`InitializeCaptureFrame` in `audio/audio_transport_impl.cc`: 8 kHz for G.711), and the processing module, whose slot this is, runs at 16, 32 or 48 kHz, never lower (`SuitableProcessRate` in `audio_processing_impl.cc`): 48 kHz for Opus, 16 kHz for G.711 and G.722. RNNoise takes 48 kHz only, so on a 16 kHz call the format adapter interpolates every frame up to 48 kHz, runs RNNoise and decimates back, for 11.5 ms of delay. Measured on a Redmi A5 with a stand party that speaks one codec, before the adapter learned the upward way (run-c5a6a1ecdca94d78714637ff): Opus 48 kHz, 1533 of 1533 frames denoised; PCMU and G.722 16 kHz, 160-sample frames, 10 and 9 denoised, 1502 and 1524 passed unchanged - the suppressor was in the call and did nothing.
 
 The engine hears the voice after echo cancellation, the platform's noise suppression and gain control, and is the last thing that changes it before the encoder. That is the place an extra denoiser does not hurt echo cancellation; a hook before the processing module (raw microphone samples, as `rtc_rnnoise` on pub.dev takes them) would feed the echo canceller a signal it no longer recognizes.
 
@@ -83,7 +85,7 @@ What the pull request adds:
 
 What it does not touch: `WebrtcNoiseSuppressionPlugin` on either platform, the chain, the detach lines, the threading. In particular:
 
-- **Its format.** An engine that works at another rate or frame length says so (`engineSampleRateHz()` / `engineFrameSize()` on Android, `engineSampleRate` / `engineFrameSize` on iOS; 0 or absent means the slot's own, 48 kHz in 10 ms frames). The add-on puts `FormatAdapter` in front of it: a windowed-sinc low-pass, decimation by a whole factor (48 kHz to 16 kHz is 3), the engine's own frames gathered, interpolation back. That costs one engine frame and the filters in delay (11.6 ms for 16 kHz in 10 ms frames; `measure` reports it as `latencyMs`). A rate 48 kHz does not divide by a whole number is not taken: its frames pass unchanged.
+- **Its format.** An engine that works at another rate or frame length says so (`engineSampleRateHz()` / `engineFrameSize()` on Android, `engineSampleRate` / `engineFrameSize` on iOS; 0 or absent means the slot's own, 48 kHz in 10 ms frames). The add-on puts `FormatAdapter` in front of it, which works both ways. An engine below the slot's rate: a windowed-sinc low-pass, decimation by a whole factor (48 kHz to 16 kHz is 3), the engine's own frames gathered, interpolation back. An engine above it (RNNoise at 48 kHz on a 16 kHz call): interpolation up, the engine's frames, decimation back. Either costs one engine frame and the filters in delay (11.6 ms for a 16 kHz engine on a 48 kHz call, `measure` reports it as `latencyMs`; 11.5 ms for RNNoise on a 16 kHz call). Rates of no whole ratio are not taken: their frames pass unchanged.
 - **Its cost.** The factory runs on the plugin's worker thread, so a model may take its time to load. `process` runs on the capture thread every 10 ms and must not allocate.
 - **A chain.** `attach(engines: [a, b])` runs every frame through `a`, then `b`, in place. One chain is in the slot at a time; the next `attach` replaces it, the same chain again is left as it is.
 
