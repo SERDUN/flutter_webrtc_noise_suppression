@@ -17,9 +17,14 @@
 }
 
 - (nullable instancetype)init {
+  return [self initWithModel:NSPRnnoiseModelV01];
+}
+
+- (nullable instancetype)initWithModel:(NSPRnnoiseModel)model {
   self = [super init];
   if (self == nil) return nil;
-  _suppressor = ns_create();
+  _model = model;
+  _suppressor = ns_create_engine((NsEngine)model);
   if (_suppressor == NULL) return nil;
   return self;
 }
@@ -29,7 +34,7 @@
 }
 
 - (NSString*)engine {
-  return [NSString stringWithUTF8String:ns_engine()];
+  return [NSString stringWithUTF8String:ns_engine_name((NsEngine)_model)];
 }
 
 - (BOOL)initializeWithSampleRate:(NSInteger)sampleRateHz {

@@ -1,7 +1,7 @@
 // swift-tools-version: 5.9
 import PackageDescription
 
-// Three targets, one plugin: the C core (noise_suppressor.h + RNNoise), the suppressor's iOS
+// Four targets, one plugin: the newer RNNoise build, the C core (noise_suppressor.h + RNNoise v0.1.1), the suppressor's iOS
 // interface on it (NSPNoiseSuppressor), and the flutter_webrtc add-on that hands captured frames to
 // that interface. flutter_webrtc is a sibling package: Flutter lays the app's plugins out side by
 // side and rewrites this path to the one flutter_webrtc gets there.
