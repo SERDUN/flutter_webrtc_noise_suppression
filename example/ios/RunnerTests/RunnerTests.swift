@@ -18,7 +18,8 @@ class RunnerTests: XCTestCase {
       answer = result
       done.fulfill()
     }
-    waitForExpectations(timeout: 2)
+    // attach answers from the main queue once its engines are created; the wait spins it.
+    waitForExpectations(timeout: 5)
     return answer
   }
 
@@ -36,6 +37,118 @@ class RunnerTests: XCTestCase {
 
   func testRnnoiseSuppressorDenoisesWhiteNoise() {
     denoisesWhiteNoise(.v0_1)
+  }
+
+  // The format adapter, with engines that only copy: the same cases as Android's FormatAdapterTest.
+
+  private final class Identity: NSObject, NSPNoiseSuppressor {
+    let rate: Int
+    let frame: Int
+    var lengths = Set<Int>()
+    init(_ rate: Int, _ frame: Int) {
+      self.rate = rate
+      self.frame = frame
+    }
+    var engine: String { "identity \(rate)/\(frame)" }
+    var engineSampleRate: Int { rate }
+    var engineFrameSize: Int { frame }
+    func initialize(withSampleRate sampleRateHz: Int) -> Bool { rate == 0 || sampleRateHz == rate }
+    func processSamples(_ samples: UnsafeMutablePointer<Float>, count: Int) -> NSPNoiseSuppressorResult {
+      lengths.insert(count)
+      return .processed
+    }
+    func releaseEngine() {}
+  }
+
+  private func sine(_ hz: Double) -> (Int) -> Float {
+    { t in Float(10_000 * sin(2 * .pi * hz * Double(t) / 48_000)) }
+  }
+
+  private func run(_ adapter: FormatAdapter, seconds: Int, _ signal: (Int) -> Float) -> [Float] {
+    var out = [Float]()
+    var frame = [Float](repeating: 0, count: 480)
+    for f in 0..<(seconds * 100) {
+      for i in 0..<480 { frame[i] = signal(f * 480 + i) }
+      _ = frame.withUnsafeMutableBufferPointer { adapter.processSamples($0.baseAddress!, count: 480) }
+      out += frame
+    }
+    return out
+  }
+
+  private func bestCorrelation(_ out: [Float], _ signal: (Int) -> Float, maxLag: Int) -> (Int, Double) {
+    var best = (0, -1.0)
+    for lag in 0...maxLag {
+      var xy = 0.0, xx = 0.0, yy = 0.0
+      for i in 24_000..<out.count {
+        let x = Double(signal(i - lag))
+        xy += x * Double(out[i])
+        xx += x * x
+        yy += Double(out[i]) * Double(out[i])
+      }
+      let c = xy / sqrt(xx * yy)
+      if c > best.1 { best = (lag, c) }
+    }
+    return best
+  }
+
+  private func levelDb(_ out: [Float]) -> Double {
+    let tail = out[24_000...]
+    let rms = sqrt(tail.reduce(0.0) { $0 + Double($1) * Double($1) } / Double(tail.count))
+    return 20 * log10(rms / (10_000 / sqrt(2)))
+  }
+
+  func testAnEngineOfTheSlotFormatGetsTheFramesAsTheyAre() {
+    let engine = Identity(0, 0)
+    let adapter = FormatAdapter(engine)
+    XCTAssertTrue(adapter.initialize(withSampleRate: 48_000))
+    XCTAssertEqual(adapter.latencySamples, 0)
+    let out = run(adapter, seconds: 1, sine(1000))
+    for i in 0..<out.count { XCTAssertEqual(out[i], sine(1000)(i)) }
+    XCTAssertEqual(engine.lengths, [480])
+  }
+
+  func testA16kHzEngineGetsItsOwnFramesAndTheVoiceBandComesBack() {
+    let engine = Identity(16_000, 160)
+    let adapter = FormatAdapter(engine)
+    XCTAssertTrue(adapter.initialize(withSampleRate: 48_000))
+    let out = run(adapter, seconds: 2, sine(1000))
+    XCTAssertEqual(engine.lengths, [160])
+    let (lag, corr) = bestCorrelation(out, sine(1000), maxLag: adapter.latencySamples + 48)
+    XCTAssertGreaterThan(corr, 0.9999, "lag \(lag)")
+    XCTAssertLessThanOrEqual(lag, adapter.latencySamples)
+    XCTAssertEqual(levelDb(out), 0, accuracy: 0.2)
+  }
+
+  func testAFrameLengthThatIsNot10msIsGathered() {
+    let engine = Identity(16_000, 256)
+    let adapter = FormatAdapter(engine)
+    XCTAssertTrue(adapter.initialize(withSampleRate: 48_000))
+    let out = run(adapter, seconds: 2, sine(440))
+    XCTAssertEqual(engine.lengths, [256])
+    XCTAssertGreaterThan(bestCorrelation(out, sine(440), maxLag: adapter.latencySamples + 48).1, 0.9999)
+  }
+
+  func testWhatTheLowerRateCannotCarryIsFilteredOut() {
+    let adapter = FormatAdapter(Identity(16_000, 160))
+    XCTAssertTrue(adapter.initialize(withSampleRate: 48_000))
+    XCTAssertLessThan(levelDb(run(adapter, seconds: 2, sine(12_000))), -40)
+  }
+
+  func testARateTheStreamDoesNotDivideLeavesFramesUnchanged() {
+    let adapter = FormatAdapter(Identity(44_100, 441))
+    XCTAssertFalse(adapter.initialize(withSampleRate: 48_000))
+    var frame = (0..<480).map { sine(1000)($0) }
+    let result = frame.withUnsafeMutableBufferPointer { adapter.processSamples($0.baseAddress!, count: 480) }
+    XCTAssertEqual(result, .unsupportedRate)
+    XCTAssertEqual(frame, (0..<480).map { sine(1000)($0) })
+  }
+
+  func testTheRegistryNamesRnnoiseAndTakesAnotherEngine() {
+    XCTAssertTrue(NoiseSuppressorRegistry.names.contains(NoiseSuppressorRegistry.rnnoise))
+    NoiseSuppressorRegistry.register("test-identity") { Identity(16_000, 160) }
+    XCTAssertEqual(NoiseSuppressorRegistry.factory("test-identity")?()?.engine, "identity 16000/160")
+    NoiseSuppressorRegistry.unregister("test-identity")
+    XCTAssertFalse(NoiseSuppressorRegistry.names.contains("test-identity"))
   }
 
   private func denoisesWhiteNoise(_ model: NSPRnnoiseModel) {
