@@ -1,18 +1,22 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-/// An engine of the suppressor, by the name the native side registered it under.
-///
-/// [rnnoise] ships with the plugin. Another engine is registered natively (Android
-/// `NoiseSuppressorRegistry.register`, iOS `NoiseSuppressorRegistry.register`) by the app or another
-/// plugin, and named here with `const WebrtcNoiseSuppressionEngine('its-name')`;
-/// [WebrtcNoiseSuppressionBridge.engines] lists what the native side has.
+/// An engine the plugin ships, by the name its native side registers it under.
 @immutable
 class WebrtcNoiseSuppressionEngine {
-  const WebrtcNoiseSuppressionEngine(this.wire);
+  const WebrtcNoiseSuppressionEngine._(this.wire);
 
   /// RNNoise v0.1.1: strong on steady and impulsive noise, weak on other voices.
-  static const rnnoise = WebrtcNoiseSuppressionEngine('rnnoise');
+  static const rnnoise = WebrtcNoiseSuppressionEngine._('rnnoise');
+
+  /// The plugin's own device tests: 16 kHz in 10 ms frames, left as they are, so what comes back is
+  /// the format adapter's. Registered only after [WebrtcNoiseSuppressionBridge.registerTestEngines].
+  @visibleForTesting
+  static const testIdentity16k = WebrtcNoiseSuppressionEngine._('test-identity-16k');
+
+  /// An engine the native side does not register, for the test of that refusal.
+  @visibleForTesting
+  static const testUnknown = WebrtcNoiseSuppressionEngine._('test-unknown');
 
   /// The name the native side knows it by.
   final String wire;
@@ -51,7 +55,7 @@ class WebrtcNoiseSuppressionBridge {
   /// is there after the call; false when flutter_webrtc has no audio processing yet, an engine could
   /// not be created, or a later [attach] or a [detach] came while the engines were being created
   /// (they are created off the main thread, a model may take most of a second). An engine the
-  /// native side has not registered fails the call with a [PlatformException] `unknown_engine`.
+  /// native side does not have fails the call with a [PlatformException] `unknown_engine`.
   ///
   /// [dumpInputSeconds] is diagnostics, Android only: the first that many seconds of what reaches
   /// the slot, before the suppressor, are kept and written on detach as a 48 kHz 16-bit WAV into the
@@ -66,11 +70,9 @@ class WebrtcNoiseSuppressionBridge {
       }) ??
       false;
 
-  /// The engines the native side has registered, by name.
-  Future<List<WebrtcNoiseSuppressionEngine>> engines() async => [
-    for (final name in await _channel.invokeListMethod<String>('engines') ?? const <String>[])
-      WebrtcNoiseSuppressionEngine(name),
-  ];
+  /// Registers the engines of the plugin's own device tests ([WebrtcNoiseSuppressionEngine.testIdentity16k]).
+  @visibleForTesting
+  Future<void> registerTestEngines() => _channel.invokeMethod<void>('registerTestEngines');
 
   /// Runs 3 s of white noise through a fresh suppressor of [engine] on this device, outside the
   /// slot but through the same format adapter: the time per 10 ms frame, the attenuation and the

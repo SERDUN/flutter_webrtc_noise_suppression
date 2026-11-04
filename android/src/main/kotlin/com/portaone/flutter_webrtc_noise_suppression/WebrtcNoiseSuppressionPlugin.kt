@@ -22,7 +22,7 @@ import java.util.concurrent.Executors
  * [AudioProcessingAdapter.ExternalAudioFrameProcessing], noise_suppression offers
  * [NoiseSuppressor]. This plugin is the only place that joins them, so neither depends on the
  * other. Engines are found by name in [NoiseSuppressorRegistry]; one of another rate or frame length
- * goes through a [FormatAdapter]. Adding an engine is registering it, not changing this class.
+ * goes through a [FormatAdapter]. A new engine of the plugin is registered there, not added here.
  *
  * Flutter registers the plugin on every engine that registers plugins, and each engine has its
  * own flutter_webrtc: the instance is bound to the engine it was attached to and reaches that
@@ -82,7 +82,10 @@ class WebrtcNoiseSuppressionPlugin :
                 }
             }
             "detach" -> result.success(detach())
-            "engines" -> result.success(NoiseSuppressorRegistry.names())
+            "registerTestEngines" -> {
+                TestEngines.register()
+                result.success(null)
+            }
             "measure" -> {
                 val name = call.argument<String>("engine") ?: NoiseSuppressorRegistry.RNNOISE
                 val factory = NoiseSuppressorRegistry.factory(name)
