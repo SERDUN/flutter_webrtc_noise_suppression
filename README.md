@@ -2,6 +2,60 @@
 
 A [flutter_webrtc](https://github.com/flutter-webrtc/flutter-webrtc) add-on: noise suppression of the voice an app sends. RNNoise v0.1.1 runs in flutter_webrtc's capture post-processing slot, after the platform's echo cancellation and noise suppression and right before the encoder. Android and iOS. Experimental. The plugin is built so that another engine joins it as a pull request: see "Adding an engine".
 
+## Where it runs
+
+```mermaid
+flowchart TB
+    mic([Microphone]) --> platform
+    subgraph platform [Platform voice processing]
+        android_hw["Android: the device's AEC and NS effects<br/>(on from Android 10 unless bypassVoiceProcessing)"]
+        ios_vpio["iOS: Apple voice processing<br/>AEC + NS + AGC together"]
+    end
+    platform --> apm
+    subgraph apm [libwebrtc audio processing module, capture side]
+        direction TB
+        hpf[High-pass filter] --> split[Split into bands] --> aec[Echo canceller AEC3] --> ns["WebRTC noise suppression<br/>(only where the platform's is off)"] --> agc1[Gain control AGC1] --> merge[Merge bands] --> agc2["AGC2 (off: flutter_webrtc sets AGC1 only)"] --> post["Post filter<br/>(biquads on the full band, at high rates)"] --> slot
+        slot[["Capture post-processing slot<br/>10 ms, channel 0, full band"]]
+    end
+    slot <--> chain
+    subgraph chain [This plugin]
+        direction TB
+        processor[ChainProcessor] --> adapter["FormatAdapter<br/>(only for an engine of another rate)"] --> engine["Engine: RNNoise v0.1.1"]
+    end
+    slot --> encoder([Opus encoder]) --> net([Network])
+```
+
+The engine hears the voice after echo cancellation, the platform's noise suppression and gain control, and is the last thing that changes it before the encoder. That is the place an extra denoiser does not hurt echo cancellation; a hook before the processing module (raw microphone samples, as `rtc_rnnoise` on pub.dev takes them) would feed the echo canceller a signal it no longer recognizes.
+
+What sits before the slot, read in the code (libwebrtc of webrtc-sdk `m150_release`, the `150.7871.04` flutter_webrtc 1.6.3 pins; flutter_webrtc 1.6.3):
+
+| Step | Where it is set | What it does |
+|---|---|---|
+| Platform AEC and NS, Android | flutter_webrtc `MethodCallHandlerImpl.initialize`: `setUseHardwareAcousticEchoCanceler` / `setUseHardwareNoiseSuppressor` from Android 10, `setNoiseSuppressorEnabled(true)` where supported; all off with `bypassVoiceProcessing` | the device's own effects, whatever its maker built |
+| Platform voice processing, iOS | flutter_webrtc's `AudioEngine` device module; its topology couples AEC and NS (`AudioEngineDevice::GetPlatformAudioProcessingTopology`) | Apple's AEC, NS and AGC, on or off together |
+| WebRTC's own noise suppression | `getUserMedia` adds `googNoiseSuppression: true` and no `noiseSuppressionMode`, so the mode is automatic (`sdk/media_constraints.cc`); `media/engine/audio_processing_controller.cc` then turns the software one on only when the platform's cannot be enabled, at level `kHigh` | where the phone has a noise suppressor of its own, that one ran before the engine, not WebRTC's |
+| The processing order | `AudioProcessingImpl::ProcessCaptureStreamLocked` | high-pass, AEC3, NS, AGC1, bands merged, AGC2 (left off), the post filter (cascaded biquads libwebrtc adds by itself at high rates against the artefacts of the processing before), then `capture_post_processor`; after it only the output level statistics, a capture level adjustment flutter_webrtc does not configure, and zeroed frames right after an unmute |
+
+Which platform effects run depends on the phone. Read on two of them during a call (`dumpsys media.audio_flinger`, the input thread's effect chain; 2026-11-04, run-d813a33c2f4fd2056ec45372 and run-a51e62e3e1f0936f785475b2):
+
+| Phone | Capture | Platform effects on the microphone | Noise suppression before the slot |
+|---|---|---|---|
+| Redmi A5 (Android 15 Go, Unisoc) | `VOICE_COMMUNICATION`, built-in mic, 48 kHz mono | Acoustic Echo Canceler (`sprd cvs`), enabled; the phone has no noise suppression effect at all | WebRTC's own (no platform NS to enable, so the rule above turns it on) |
+| Galaxy Tab A SM-T505 (Android 12, Qualcomm) | `VOICE_COMMUNICATION`, back mic, 48 kHz | Acoustic Echo Canceler and Noise Suppression (Qualcomm Fluence), both enabled | Fluence; WebRTC's own is off |
+
+A probe in the app saw the same on the stand through libwebrtc's processing state: noise suppression `SOFTWARE` on the Redmi A5 (no hardware one), `PLATFORM` on the Galaxy Tab A, echo cancellation `PLATFORM` on both. Turning the platform's noise suppression off moved the far end's speech-to-pause gap by -1.8 to +2.6 dB on keyboard, babble, a colleague and a restaurant, within the run-to-run spread (agent-tasks WT-2189, matrix 1).
+
+### How the plugin is wired in
+
+1. **The app** calls `attach()` when its microphone track opens and `detach()` when it stops; a switch in the app's settings decides whether it calls them at all. Nothing goes into `MainActivity` or `AppDelegate`: `GeneratedPluginRegistrant` registers the plugin.
+2. **Dart to native.** `WebrtcNoiseSuppressionBridge` sends `attach` with the engine names over the method channel `com.portaone.flutter_webrtc_noise_suppression`.
+3. **Engines are made** on the plugin's worker thread from `NoiseSuppressorRegistry`, each wrapped in a `FormatAdapter`.
+4. **Into the slot**, back on the main thread. Android: the Flutter engine's own `FlutterWebRTCPlugin` (never `sharedSingleton`), its `audioProcessingController.capturePostProcessing.addProcessor(...)`; flutter_webrtc gave that adapter to the factory as `ExternalAudioProcessingFactory`, which libwebrtc builds into the processing module with `SetCapturePostProcessing`. iOS: `AudioManager.sharedInstance().capturePostProcessingAdapter.addProcessing(...)`, the delegate of the process-wide `RTCDefaultAudioProcessingModule`.
+5. **Every 10 ms** on the capture thread libwebrtc calls the slot with channel 0 of the full-band buffer: 480 float samples on the int16 scale at 48 kHz (Android: `ExternalAudioProcessor::Process`, a direct `ByteBuffer` over the native samples; iOS: `RTCAudioBuffer.rawBufferForChannel(0)`). The chain runs each engine in place and the frame goes on to the encoder. The slot input written by `dumpInputSeconds` on a Redmi A5 was that: 48 kHz, 480-sample frames.
+6. **Detach** takes the chain out under the adapter's lock, so no frame is in flight when the engines are freed, and logs one line per engine.
+
+On iOS libwebrtc's own adapter of the slot takes its lock with `os_unfair_lock_trylock` and lets a frame through untouched when it cannot (`RTCAudioCustomProcessingAdapter.mm`). That lock is held while the module initializes or releases its delegate (a stream starting, a rate change), not while this plugin attaches: a frame that meets such a moment passes unprocessed.
+
 ## Engines
 
 | `WebrtcNoiseSuppressionEngine` | What | Weights | CPU (M5 host, per 10 ms frame) |
