@@ -25,7 +25,7 @@ flowchart TB
     slot --> encoder(["Encoder of the negotiated codec<br/>(Opus, G.711, G.722, ...)"]) --> net([Network])
 ```
 
-The slot comes before any encoder, so it works whatever the codec, but **the codec sets the slot's rate**. libwebrtc takes the microphone at the lowest native rate not below the send codec's (`InitializeCaptureFrame` in `audio/audio_transport_impl.cc`: 8 kHz for G.711), and the processing module, whose slot this is, runs at 16, 32 or 48 kHz, never lower (`SuitableProcessRate` in `audio_processing_impl.cc`): 48 kHz for Opus, 16 kHz for G.711 and G.722. RNNoise takes 48 kHz only, so on a 16 kHz call the format adapter interpolates every frame up to 48 kHz, runs RNNoise and decimates back, for 11.5 ms of delay. Measured on a Redmi A5 with a stand party that speaks one codec, before the adapter learned the upward way (run-c5a6a1ecdca94d78714637ff): Opus 48 kHz, 1533 of 1533 frames denoised; PCMU and G.722 16 kHz, 160-sample frames, 10 and 9 denoised, 1502 and 1524 passed unchanged - the suppressor was in the call and did nothing. With the adapter going up, the app on the same three codecs denoised every frame on a Redmi A5 and a Galaxy Tab A (run-1a18abd2807231852bcb732d), and on a PCMU call with noise played into the Redmi the far end's speech-to-pause gap on babble went from 11.2 to 17.4 dB against the switch off (run-0de10e8737adaa705f4f167c, run-ae0a315e235b3d2056d9b173, one run each).
+The slot comes before any encoder, so it works whatever the codec, but **the codec sets the slot's rate**. libwebrtc takes the microphone at the lowest native rate not below the send codec's (`InitializeCaptureFrame` in `audio/audio_transport_impl.cc`: 8 kHz for G.711), and the processing module, whose slot this is, runs at 16, 32 or 48 kHz, never lower (`SuitableProcessRate` in `audio_processing_impl.cc`): 48 kHz for Opus, 16 kHz for G.711 and G.722. RNNoise takes 48 kHz only, so on a 16 kHz call the format adapter interpolates every frame up to 48 kHz, runs RNNoise and decimates back, for 11.5 ms of delay. Measured on a Redmi A5 with a SIP party that speaks one codec, before the adapter learned the upward way: Opus 48 kHz, 1533 of 1533 frames denoised; PCMU and G.722 16 kHz, 160-sample frames, 10 and 9 denoised, 1502 and 1524 passed unchanged - the suppressor was in the call and did nothing. With the adapter going up, the same three codecs had every frame denoised on a Redmi A5 and a Galaxy Tab A, and on a PCMU call with noise played into the Redmi the far end's speech-to-pause gap on babble went from 11.2 to 17.4 dB against the switch off (one run each).
 
 Which rates the slot can see, with the codecs of the built-in factory both platforms of flutter_webrtc 1.6.3 use (`CreateBuiltinAudioEncoderFactory`, libwebrtc m150):
 
@@ -46,17 +46,17 @@ What sits before the slot, read in the code (libwebrtc of webrtc-sdk `m150_relea
 |---|---|---|
 | Platform AEC and NS, Android | flutter_webrtc `MethodCallHandlerImpl.initialize`: `setUseHardwareAcousticEchoCanceler` / `setUseHardwareNoiseSuppressor` from Android 10, `setNoiseSuppressorEnabled(true)` where supported; all off with `bypassVoiceProcessing` | the device's own effects, whatever its maker built |
 | Platform voice processing, iOS | flutter_webrtc's `AudioEngine` device module; its topology couples AEC and NS (`AudioEngineDevice::GetPlatformAudioProcessingTopology`) | Apple's AEC, NS and AGC, on or off together |
-| WebRTC's own noise suppression | `getUserMedia` adds `googNoiseSuppression: true` and no `noiseSuppressionMode`, so the mode is automatic (`sdk/media_constraints.cc`); `media/engine/audio_processing_controller.cc` then turns the software one on only when the platform's cannot be enabled, at level `kHigh` | where the phone has a noise suppressor of its own, that one ran before the engine, not WebRTC's |
+| WebRTC's own noise suppression | the app's `googNoiseSuppression` constraint if it names one, else libwebrtc's own default, on (`WebRtcVoiceEngine::Init`; flutter_webrtc adds `true` itself only for `audio: true`, not for a constraints map on Android); no `noiseSuppressionMode` is sent, so the mode is automatic (`sdk/media_constraints.cc`), and `media/engine/audio_processing_controller.cc` turns the software one on only when the platform's cannot be enabled, at level `kHigh` | where the phone has a noise suppressor of its own, that one ran before the engine, not WebRTC's |
 | The processing order | `AudioProcessingImpl::ProcessCaptureStreamLocked` | high-pass, AEC3, NS, AGC1, bands merged, AGC2 (left off), the post filter (cascaded biquads libwebrtc adds by itself at high rates against the artefacts of the processing before), then `capture_post_processor`; after it only the output level statistics, a capture level adjustment flutter_webrtc does not configure, and zeroed frames right after an unmute |
 
-Which platform effects run depends on the phone. Read on two of them during a call (`dumpsys media.audio_flinger`, the input thread's effect chain; 2026-11-04, run-d813a33c2f4fd2056ec45372 and run-a51e62e3e1f0936f785475b2):
+Which platform effects run depends on the phone. Read on two of them during a call (`dumpsys media.audio_flinger`, the input thread's effect chain):
 
 | Phone | Capture | Platform effects on the microphone | Noise suppression before the slot |
 |---|---|---|---|
 | Redmi A5 (Android 15 Go, Unisoc) | `VOICE_COMMUNICATION`, built-in mic, 48 kHz mono | Acoustic Echo Canceler (`sprd cvs`), enabled; the phone has no noise suppression effect at all | WebRTC's own (no platform NS to enable, so the rule above turns it on) |
 | Galaxy Tab A SM-T505 (Android 12, Qualcomm) | `VOICE_COMMUNICATION`, back mic, 48 kHz | Acoustic Echo Canceler and Noise Suppression (Qualcomm Fluence), both enabled | Fluence; WebRTC's own is off |
 
-A probe in the app saw the same on the stand through libwebrtc's processing state: noise suppression `SOFTWARE` on the Redmi A5 (no hardware one), `PLATFORM` on the Galaxy Tab A, echo cancellation `PLATFORM` on both. Turning the platform's noise suppression off moved the far end's speech-to-pause gap by -1.8 to +2.6 dB on keyboard, babble, a colleague and a restaurant, within the run-to-run spread (agent-tasks WT-2189, matrix 1).
+A probe in a test build saw the same through libwebrtc's processing state: noise suppression `SOFTWARE` on the Redmi A5 (no hardware one), `PLATFORM` on the Galaxy Tab A, echo cancellation `PLATFORM` on both. Turning the platform's noise suppression off moved the far end's speech-to-pause gap by -1.8 to +2.6 dB on keyboard, babble, a colleague and a restaurant, within the run-to-run spread.
 
 ### How the plugin is wired in
 
@@ -68,6 +68,49 @@ A probe in the app saw the same on the stand through libwebrtc's processing stat
 6. **Detach** takes the chain out under the adapter's lock, so no frame is in flight when the engines are freed, and logs one line per engine.
 
 On iOS libwebrtc's own adapter of the slot takes its lock with `os_unfair_lock_trylock` and lets a frame through untouched when it cannot (`RTCAudioCustomProcessingAdapter.mm`). That lock is held while the module initializes or releases its delegate (a stream starting, a rate change), not while this plugin attaches: a frame that meets such a moment passes unprocessed.
+
+## The default suppression and RNNoise
+
+Two things suppress noise in a call, and they do not replace each other: the default one comes first, and RNNoise, when an app turns it on, works on what is left.
+
+| | Default suppression | RNNoise (this plugin) |
+|---|---|---|
+| What it is | the phone maker's effect, Apple's voice processing, or WebRTC's software suppressor where the phone has none | a small neural network, RNNoise v0.1.1 |
+| Where it runs | on the microphone path and in the processing module, before the slot | in the slot, last before the encoder |
+| State | on unless the app turns it off (`googNoiseSuppression: false`) | off until the app calls `attach()` |
+| Rates | what the platform and the module run at | 48 kHz; 16 kHz calls through the format adapter |
+| Cost | none the app sees | about 90 KB of weights, p99 1-6 ms per 10 ms frame on the phones measured, 10 ms of delay of its own, 11.5 ms more on a 16 kHz call |
+
+What the default does differs by phone (see above: WebRTC's on a Redmi A5, Qualcomm Fluence on a Galaxy Tab A, Apple's on an iPhone), and on these noises it did little: turning it off moved the far end's speech-to-pause gap by -1.8 to +2.6 dB, within the run-to-run spread of the setup.
+
+RNNoise added on top of the default, gain in that gap at the far end in dB, Opus calls with voice and noise played from one speaker at the phone (the spread is about 2 dB, the real recordings are one run each):
+
+| Noise | Redmi A5 | Galaxy Tab A |
+|---|---|---|
+| Keyboard | +9 | +11 |
+| Real crowd | +5 | +8 |
+| Babble of six voices | +3 | +3 |
+| Real restaurant | +1 | +3 |
+| Synthetic restaurant | 0 | +2 |
+| One colleague close by | +5 | +2 |
+
+The two settings measured on their own, through an app's settings, Opus calls, voice and noise from one speaker at the phone, speech-to-pause gap at the far end in dB, the mean of 2-3 calls:
+
+| Variant | Redmi A5 (default: WebRTC's) | | | Galaxy Tab A (default: Qualcomm Fluence) | | |
+|---|---|---|---|---|---|---|
+| | Keyboard | Babble | A colleague | Keyboard | Babble | A colleague |
+| Neither | 23.8 | 12.7 | 9.6 | 10.2 | 10.4 | 10.5 |
+| Default only (a call today) | 27.5 | 12.7 | 9.2 | 10.6 | 10.3 | 10.1 |
+| RNNoise only | 34.3 | 14.2 | 9.4 | 25.2 | 14.2 | 12.0 |
+| Default and RNNoise | 32.7 | 14.4 | 8.7 | 26.2 | 14.1 | 11.8 |
+
+RNNoise is the step that counts: +9 to +10 dB on keyboard on the Redmi A5, +15 on the Galaxy Tab A, about +1.5 and +4 on babble, nothing and +1.5 on a colleague. The default gives +3.7 dB on keyboard on the Redmi A5 and nothing anywhere else. RNNoise with the default against RNNoise alone differs within the spread (keyboard calls of one variant differed by up to 9 dB on the Redmi A5, 3 on the Galaxy Tab A). The voice stayed within 0.2 dB on the Redmi A5 and fell 0.5-0.7 dB on the Galaxy Tab A with RNNoise on. Every frame was denoised (`unchanged=0`), p99 1.2 ms and 3.6-4.0 ms. On the Galaxy Tab A `dumpsys media.audio_flinger` shows Fluence's suppressor `enabled=y` with the default on and `enabled=n` with it off; on the Redmi A5 the default is inside libwebrtc, where that dump does not reach.
+
+On a PCMU call on the Redmi A5, one run with the switch on against off: babble +6.2, keyboard +1.0, colleague +0.1 dB, the voice within 0.2 dB. On an iPhone over Apple's processing, one run: the gap went from 9.9 to 20.3 dB on keyboard and from 10.4 to 23.8 on a real crowd, and did not improve on babble, a restaurant or a colleague (11.1 to 8.4, 8.7 to 7.6, 4.2 to 3.0).
+
+With a person holding a Redmi A5 as in a call, read offline from the slot's input: the voice did not change (0.0 dB). With the person silent RNNoise took 7 and 2 dB off keyboard noise in two takes, and under 1 dB off babble or a colleague: it keeps whatever sounds like a voice, so another person's speech mostly passes.
+
+So: it is worth having against keyboards and other noise that is not a voice, it does not make a neighbour's voice go away, and it does no harm to the default running before it. Echo was not worse with it on the Galaxy Tab A (the Redmi A5 has no reference run). The numbers above say nothing of artefacts.
 
 ## Engines
 
@@ -161,7 +204,7 @@ Diagnostics, Android only: `attach(dumpInputSeconds: 300)` keeps what reaches th
 - **The rate.** A processor added while the microphone already runs is never told the rate; the length of the first frame (10 ms) gives it. The rate also changes during a call: it starts at 48 kHz and drops to 16 kHz when the send codec turns out to be G.711 or G.722 (`initialize(16000, 1)` in the detach line).
 - **iOS log level.** The two lines a call are os_log's default level: on an iPhone the log stream dropped info lines of this subsystem.
 - **The example's Xcode project.** `flutter create --template=plugin` puts a reference to `ios/flutter_webrtc_noise_suppression` into the example's Runner project, for editing. Xcode then resolves that original `Package.swift`, whose `../flutter_webrtc` exists only in the copy Flutter writes to `build/ios/SourcePackages` (with the paths rewritten to the hashed names git dependencies get), and the build stops with `cannot be accessed`. The reference is removed here; apps never had it.
-- **The example's build directory.** With Swift Package Manager Flutter copies the whole plugin directory, `example/` included, into `example/build/ios/SourcePackages`, so every iOS build nests the copy of the one before it, until a build stops with `Failed to copy plugin ... Assertion failed: (pathbufsz > fts_pathlen)`. Run `flutter clean` in `example/` when that happens; it happens on an Android build too, so the second phone of a run nests the first one's copy (portaone-qa's `flutter-package-test.sh` removes it before each phone). An app that takes the plugin from git has no such directory in its copy.
+- **The example's build directory.** With Swift Package Manager Flutter copies the whole plugin directory, `example/` included, into `example/build/ios/SourcePackages`, so every iOS build nests the copy of the one before it, until a build stops with `Failed to copy plugin ... Assertion failed: (pathbufsz > fts_pathlen)`. Run `flutter clean` in `example/` when that happens; it happens on an Android build too, so the second phone of a run nests the first one's copy (remove `example/build/ios/SourcePackages` between phones). An app that takes the plugin from git has no such directory in its copy.
 - **RNNoise's global.** RNNoise keeps its FFT state in a global named `common`; every build defines `common=ns_rnnoise_common` so it cannot collide with another library in the process.
 - **RNNoise's first frame.** RNNoise builds its FFT tables with `malloc` on the first frame; `ns_create` runs one frame of silence so that happens off the audio thread. `rnnoise_init` on a live state leaks its buffers; `ns_reset` replaces the state instead (it allocates, so not per frame).
 - iOS 15.0 is the lowest target (Xcode 27 accepts nothing older). The iOS build goes through Swift Package Manager (`ios/flutter_webrtc_noise_suppression/Package.swift` names `../flutter_webrtc`, the sibling Flutter lays out) or CocoaPods. With CocoaPods all sources are one module, so the Swift files import `NoiseSuppression` only when it exists, and the pod is a static framework because flutter_webrtc's is; on Xcode 27 an app's Podfile also has to raise the deployment target of pods that ask for less than 15.0, flutter_webrtc among them.
@@ -175,7 +218,7 @@ cd example/android && ./gradlew :flutter_webrtc_noise_suppression:testDebugUnitT
 cd example && flutter test integration_test   # on a device: attach and detach, a chain with the test engine, an unknown engine, an attach overtaken, measure of both
 cd example && flutter build ios --config-only --debug && cd ios && xcodebuild test -workspace Runner.xcworkspace \
   -scheme Runner -destination id=<iPhone udid> -only-testing:RunnerTests DEVELOPMENT_TEAM=<team> -allowProvisioningUpdates
-# the format adapter in Swift and the suppressor on an iPhone; the simulator build of the example fails on Flutter.framework's architectures on m2
+# the format adapter in Swift and the suppressor on an iPhone
 ```
 
 ## License
