@@ -73,6 +73,16 @@ public final class RnnoiseSuppressor implements NoiseSuppressor {
     }
   }
 
+  @Override
+  public int engineSampleRateHz() {
+    return nativeSampleRate();
+  }
+
+  @Override
+  public int engineFrameSize() {
+    return nativeFrameSize();
+  }
+
   /** Samples per frame the engine accepts. */
   public static int frameSize() {
     return nativeFrameSize();
