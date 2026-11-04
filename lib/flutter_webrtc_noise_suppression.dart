@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 
 /// An engine of the suppressor.
 enum WebrtcNoiseSuppressionEngine {
-  /// RNNoise v0.1.1: the cheapest; strong on steady and impulsive noise, weak on other voices.
+  /// RNNoise v0.1.1: strong on steady and impulsive noise, weak on other voices.
   rnnoise('rnnoise');
 
   const WebrtcNoiseSuppressionEngine(this.wire);
