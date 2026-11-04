@@ -380,8 +380,13 @@ private class ChainProcessor(
             stages.forEach { it.suppressor.initialize(numFrames * 100) }
             initialized = true
         }
+        // One WAV holds one rate: a call starts at 48 kHz and drops to 16 kHz once a G.711 or G.722
+        // codec is chosen, so the dump starts again at the rate the call settles on.
+        if (dump != null && dumpRate != numFrames * 100) {
+            dumpRate = numFrames * 100
+            dumped = 0
+        }
         if (dump != null && dumped + numFrames <= dump.size) {
-            if (dumpRate == 0) dumpRate = numFrames * 100
             // The buffer wraps native memory: read it in native order (Java's default is big endian).
             // A view object per frame: diagnostics only, never in a normal call.
             val floats = buffer.duplicate().order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer()

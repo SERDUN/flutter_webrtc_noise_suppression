@@ -2,7 +2,10 @@ import Flutter
 import Foundation
 import WebRTC
 import flutter_webrtc
-import NoiseSuppression
+#if canImport(NoiseSuppression)
+  // Swift Package Manager builds it as a module of its own; CocoaPods builds one module of all.
+  import NoiseSuppression
+#endif
 import os.log
 
 /// Puts a chain of `NSPNoiseSuppressor`s into flutter_webrtc's capture post-processing slot.
