@@ -1,6 +1,6 @@
 # flutter_webrtc_noise_suppression
 
-A [flutter_webrtc](https://github.com/flutter-webrtc/flutter-webrtc) add-on: noise suppression of the voice an app sends. A chain of engines runs in flutter_webrtc's capture post-processing slot, after the platform's echo cancellation and noise suppression and right before the encoder; RNNoise v0.1.1 ships with it, and an app or another plugin can register its own. Android and iOS. Experimental.
+A [flutter_webrtc](https://github.com/flutter-webrtc/flutter-webrtc) add-on: noise suppression of the voice an app sends. RNNoise v0.1.1 runs in flutter_webrtc's capture post-processing slot, after the platform's echo cancellation and noise suppression and right before the encoder. Android and iOS. Experimental. The plugin is built so that another engine joins it as a pull request: see "Adding an engine".
 
 ## Engines
 
@@ -10,30 +10,30 @@ A [flutter_webrtc](https://github.com/flutter-webrtc/flutter-webrtc) add-on: noi
 
 `measure(engine:)` gives the time per frame and the attenuation on the device it runs on: on a Redmi A5 (Android 15 Go) p99 465 us, on a Galaxy Tab A SM-T505 (Android 12) p99 496 us. In a real call, from the detach line, the same engine took p99 1.2 ms per frame on the Redmi A5 and 3.8 ms on the SM-T505, no frame over its 10 ms.
 
-RNNoise main's little model and DeepFilterNet 3 were measured for this slot and not taken (little takes the voice down under babble; DeepFilterNet 3 misses frames on the SM-T505 and costs about 19 MB per ABI). Either can come back as a registered engine, without a change here.
+RNNoise main's little model and DeepFilterNet 3 were measured for this slot and not taken (little takes the voice down under babble; DeepFilterNet 3 misses frames on the SM-T505 and costs about 19 MB per ABI). Either can come back as an engine of the plugin, as below.
 
 ## Adding an engine
 
-An engine is an implementation of the suppressor's interface, registered by name before the first `attach` names it, from the app's own code or another plugin's:
+For contributors: an engine is added to the plugin by a pull request. An app picks one of the engines the plugin ships (`WebrtcNoiseSuppressionEngine.rnnoise`) and cannot bring its own: the registry, the format adapter and the test engine are internal.
 
-```kotlin
-// Android: MainActivity.configureFlutterEngine, or a plugin's onAttachedToEngine
-NoiseSuppressorRegistry.register("my-engine") { MyEngine() } // MyEngine : NoiseSuppressor
-```
+What the pull request adds:
 
-```swift
-// iOS: AppDelegate, or a plugin's register(with:); `import flutter_webrtc_noise_suppression` brings NSPNoiseSuppressor
-NoiseSuppressorRegistry.register("my-engine") { MyEngine() } // MyEngine: NSObject, NSPNoiseSuppressor
-```
+| Part | Where |
+|---|---|
+| The engine on Android: an implementation of `NoiseSuppressor` (Java or Kotlin, over JNI if its core is native) | `android/src/main/java/.../`, native code under `android/src/main/cpp` or as a prebuilt `jniLibs` library |
+| The engine on iOS: an implementation of `NSPNoiseSuppressor` | `ios/flutter_webrtc_noise_suppression/Sources/NoiseSuppression/`, its C core as a target of `Package.swift` |
+| Its name, one line per platform | the `init` block of `NoiseSuppressorRegistry.kt`, the `factories` of `NoiseSuppressorRegistry.swift` |
+| Its name in Dart | `static const myEngine = WebrtcNoiseSuppressionEngine._('my-engine');` in `lib/` |
+| Its license | `THIRD_PARTY_NOTICES.md` |
+| Its check on a device | `example/integration_test`: `measure(engine: ...)` within the 10 ms budget and attenuating white noise |
 
-```dart
-await bridge.attach(engines: const [WebrtcNoiseSuppressionEngine('my-engine')]);
-await bridge.engines(); // what the native side has registered
-```
+What it does not touch: `WebrtcNoiseSuppressionPlugin` on either platform, the chain, the detach lines, the threading. In particular:
 
-- **Its format.** An engine that works at another rate or frame length says so (`engineSampleRateHz()` / `engineFrameSize()` on Android, `engineSampleRate` / `engineFrameSize` on iOS; 0 or absent means the slot's own, 48 kHz in 10 ms frames). The add-on then puts a format adapter in front of it: a windowed-sinc low-pass, decimation by a whole factor (48 kHz to 16 kHz is 3), the engine's own frames gathered, and interpolation back. It costs one engine frame and the filters in delay (11.6 ms for 16 kHz in 10 ms frames; `measure` reports it as `latencyMs`). A rate 48 kHz does not divide by a whole number is not taken: its frames pass unchanged.
-- **Its cost.** The factory runs off the main thread, so a model may take its time to load. `process` runs on the capture thread every 10 ms and must not allocate; `measure(engine:)` tells whether it fits a phone.
-- **A chain.** `attach(engines: [a, b])` runs every frame through `a`, then `b`, in place: for instance a denoiser and then another stage. One chain is in the slot at a time; the next `attach` replaces it, the same chain again is left as it is.
+- **Its format.** An engine that works at another rate or frame length says so (`engineSampleRateHz()` / `engineFrameSize()` on Android, `engineSampleRate` / `engineFrameSize` on iOS; 0 or absent means the slot's own, 48 kHz in 10 ms frames). The add-on puts `FormatAdapter` in front of it: a windowed-sinc low-pass, decimation by a whole factor (48 kHz to 16 kHz is 3), the engine's own frames gathered, interpolation back. That costs one engine frame and the filters in delay (11.6 ms for 16 kHz in 10 ms frames; `measure` reports it as `latencyMs`). A rate 48 kHz does not divide by a whole number is not taken: its frames pass unchanged.
+- **Its cost.** The factory runs on the plugin's worker thread, so a model may take its time to load. `process` runs on the capture thread every 10 ms and must not allocate.
+- **A chain.** `attach(engines: [a, b])` runs every frame through `a`, then `b`, in place. One chain is in the slot at a time; the next `attach` replaces it, the same chain again is left as it is.
+
+The device tests use an engine of the plugin's own, `test-identity-16k` (16 kHz in 10 ms frames, left as they are), registered only by `registerTestEngines()`, which is `@visibleForTesting`; it is what shows the adapter and a chain work on a phone.
 
 ## Inside
 
@@ -42,9 +42,9 @@ await bridge.engines(); // what the native side has registered
 | C core: `noise_suppressor.h` over RNNoise (48 kHz, 480-sample frames), engine chosen at creation | `ios/flutter_webrtc_noise_suppression/Sources/NoiseSuppressionCore` (Android compiles the same files, `android/src/main/cpp`) | nothing |
 | The suppressor's interface: `NoiseSuppressor` / `RnnoiseSuppressor` (Android, JNI), `NSPNoiseSuppressor` / `NSPRnnoiseSuppressor` (iOS) | `android/src/main/java`, `ios/.../Sources/NoiseSuppression` | the C core only |
 | The add-on: `NoiseSuppressorRegistry` (name to engine), `FormatAdapter` (another rate or frame length), `WebrtcNoiseSuppressionPlugin` with its chain, which takes flutter_webrtc's captured frames and hands them to the engines | `android/src/main/kotlin`, `ios/.../Sources/flutter_webrtc_noise_suppression` | flutter_webrtc and the interface |
-| Dart: `WebrtcNoiseSuppressionBridge` (`attach`, `detach`, `engines`, `measure`) | `lib/` | the channel |
+| Dart: `WebrtcNoiseSuppressionBridge` (`attach`, `detach`, `measure`) | `lib/` | the channel |
 
-The add-on works with the engines only through their interface and finds them by name, so another engine is another implementation of `NoiseSuppressor`, registered, and the add-on does not change. flutter_webrtc is reached through its public interfaces: `AudioProcessingAdapter.ExternalAudioFrameProcessing` on Android, `ExternalAudioProcessingDelegate` and `AudioManager.capturePostProcessingAdapter` on iOS. Nothing is looked up by name, and nothing goes into the app's `MainActivity` or `AppDelegate`: the plugin is registered by `GeneratedPluginRegistrant` like any other.
+The add-on works with the engines only through their interface and finds them by name, so another engine is another implementation of `NoiseSuppressor` with one registry line, and the add-on does not change. flutter_webrtc is reached through its public interfaces: `AudioProcessingAdapter.ExternalAudioFrameProcessing` on Android, `ExternalAudioProcessingDelegate` and `AudioManager.capturePostProcessingAdapter` on iOS. Nothing is looked up by name, and nothing goes into the app's `MainActivity` or `AppDelegate`: the plugin is registered by `GeneratedPluginRegistrant` like any other.
 
 ## Use
 
@@ -62,7 +62,7 @@ await bridge.attach(); // true: RNNoise is in the slot; every call's microphone 
 await bridge.detach(); // true: it was there and is out
 ```
 
-`attach` returns false when flutter_webrtc has not built its factory yet (it does on its first use: `getUserMedia`, `createPeerConnection`), an engine cannot be created, or a later `attach` or a `detach` came while its engines were being created (they are created on a worker thread and go into the slot on the main one); the audio is then left as it was. An engine nobody registered fails it with `PlatformException` `unknown_engine`. Attach when the microphone track opens and detach when it stops.
+`attach` returns false when flutter_webrtc has not built its factory yet (it does on its first use: `getUserMedia`, `createPeerConnection`), an engine cannot be created, or a later `attach` or a `detach` came while its engines were being created (they are created on a worker thread and go into the slot on the main one); the audio is then left as it was. An engine the native side does not have fails it with `PlatformException` `unknown_engine`. Attach when the microphone track opens and detach when it stops.
 
 The native side logs a line on attach and one per engine on detach (logcat tag `WebrtcNoiseSuppression`, os_log subsystem `com.portaone.flutter_webrtc_noise_suppression`): the chain and how long its engines took to create, then each engine's frames and their time in the call (the detach line is from a call on a Redmi A5; the bracket is in this version's form):
 
@@ -105,7 +105,7 @@ Diagnostics, Android only: `attach(dumpInputSeconds: 300)` keeps the first that 
 make test                 # the C core on the host: white noise attenuated by more than 10 dB, bad frames untouched
 flutter analyze && flutter test
 cd example/android && ./gradlew :flutter_webrtc_noise_suppression:testDebugUnitTest   # the format adapter and the registry on the JVM (JDK 17-21)
-cd example && flutter test integration_test   # on a device: attach and detach, a chain with the example's own 16 kHz engine, an attach overtaken, measure of both
+cd example && flutter test integration_test   # on a device: attach and detach, a chain with the test engine, an unknown engine, an attach overtaken, measure of both
 cd example/ios && xcodebuild test -workspace Runner.xcworkspace -scheme Runner \
   -destination 'platform=iOS Simulator,name=<iPhone>' -only-testing:RunnerTests
 ```
