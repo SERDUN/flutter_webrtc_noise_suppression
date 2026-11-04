@@ -6,12 +6,13 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:flutter_webrtc_noise_suppression/flutter_webrtc_noise_suppression.dart';
 import 'package:integration_test/integration_test.dart';
 
-/// Registered by the example app itself (MainActivity, AppDelegate): 16 kHz frames left as they are.
-const identity16k = WebrtcNoiseSuppressionEngine('example-identity-16k');
+/// The plugin's test engine: 16 kHz frames left as they are, so what comes back is the adapter's.
+const identity16k = WebrtcNoiseSuppressionEngine.testIdentity16k;
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   const bridge = WebrtcNoiseSuppressionBridge();
+  setUpAll(bridge.registerTestEngines);
 
   testWidgets('the suppressor goes into the capture slot and comes out again', (tester) async {
     // flutter_webrtc builds its factory, and the slot with it, on its first use.
@@ -25,16 +26,15 @@ void main() {
     await pc.close();
   });
 
-  testWidgets('an engine the app registered joins a chain', (tester) async {
+  testWidgets('a chain of two engines goes into the slot', (tester) async {
     final pc = await createPeerConnection({'iceServers': []});
 
-    expect(await bridge.engines(), containsAll([WebrtcNoiseSuppressionEngine.rnnoise, identity16k]));
     expect(await bridge.attach(engines: const [WebrtcNoiseSuppressionEngine.rnnoise, identity16k]), isTrue);
     expect(await bridge.attach(engines: const [identity16k]), isTrue, reason: 'another chain replaces it');
     expect(await bridge.detach(), isTrue);
 
     await expectLater(
-      bridge.attach(engines: const [WebrtcNoiseSuppressionEngine('no-such-engine')]),
+      bridge.attach(engines: const [WebrtcNoiseSuppressionEngine.testUnknown]),
       throwsA(isA<PlatformException>().having((e) => e.code, 'code', 'unknown_engine')),
     );
 

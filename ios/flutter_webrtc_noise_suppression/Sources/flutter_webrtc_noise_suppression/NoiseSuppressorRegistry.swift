@@ -1,25 +1,19 @@
 import Foundation
-// An app that writes an engine needs NSPNoiseSuppressor: importing this module gives it.
-@_exported import NoiseSuppression
+import NoiseSuppression
 
 /// The engines `attach` and `measure` can name, each by the name the Dart side sends.
 ///
-/// RNNoise v0.1.1 is registered as `NoiseSuppressorRegistry.rnnoise`. An app or another plugin adds
-/// its own engine from its own code, before the first call names it (in `AppDelegate`, or in its
-/// plugin's `register(with:)`):
-///
-///     NoiseSuppressorRegistry.register("my-engine") { MyEngine() }
-///
-/// and Dart names it with `WebrtcNoiseSuppressionEngine('my-engine')`. Nothing in this plugin
-/// changes for it: the engine is an `NSPNoiseSuppressor`, and one that works at another rate or
-/// frame length says so through `engineSampleRate` and `engineFrameSize`. The registry is
-/// process-wide and safe to use from any thread; a factory runs off the main thread and may take its
-/// time (loading a model). A factory that returns nil could not create its engine.
-public final class NoiseSuppressorRegistry {
-  public typealias Factory = () -> NSPNoiseSuppressor?
+/// Internal to the plugin: an app picks one of the engines the plugin ships
+/// (`WebrtcNoiseSuppressionEngine.rnnoise`), it does not bring its own. A new engine comes as a pull
+/// request: its `NSPNoiseSuppressor`, one entry in `factories` below, its name in Dart (see the
+/// README, "Adding an engine"). The plugin, the chain and the `FormatAdapter` do not change for it.
+/// Safe to use from any thread; a factory runs off the main thread and may take its time (loading
+/// a model). A factory that returns nil could not create its engine.
+final class NoiseSuppressorRegistry {
+  typealias Factory = () -> NSPNoiseSuppressor?
 
   /// The name of RNNoise v0.1.1, the default engine.
-  public static let rnnoise = "rnnoise"
+  static let rnnoise = "rnnoise"
 
   private static let lock = NSLock()
   private static var factories: [String: Factory] = [rnnoise: { NSPRnnoiseSuppressor(model: .v0_1) }]
@@ -27,21 +21,21 @@ public final class NoiseSuppressorRegistry {
   private init() {}
 
   /// Adds the engine `name`, or replaces the one of that name.
-  public static func register(_ name: String, factory: @escaping Factory) {
+  static func register(_ name: String, factory: @escaping Factory) {
     lock.lock()
     defer { lock.unlock() }
     factories[name] = factory
   }
 
   /// Removes the engine `name`; a suppressor already in the slot stays until it is detached.
-  public static func unregister(_ name: String) {
+  static func unregister(_ name: String) {
     lock.lock()
     defer { lock.unlock() }
     factories.removeValue(forKey: name)
   }
 
   /// The names registered, sorted.
-  public static var names: [String] {
+  static var names: [String] {
     lock.lock()
     defer { lock.unlock() }
     return factories.keys.sorted()
@@ -51,5 +45,30 @@ public final class NoiseSuppressorRegistry {
     lock.lock()
     defer { lock.unlock() }
     return factories[name]
+  }
+}
+
+/// Engines for the plugin's own device tests, registered only when a test asks
+/// (`WebrtcNoiseSuppressionBridge.registerTestEngines`), never in an app's normal run.
+enum TestEngines {
+  /// 16 kHz in 10 ms frames, left as they are: what reaches the slot back is the format adapter's.
+  static let identity16k = "test-identity-16k"
+
+  static func register() {
+    NoiseSuppressorRegistry.register(identity16k) { Identity16k() }
+  }
+
+  private final class Identity16k: NSObject, NSPNoiseSuppressor {
+    var engine: String { "test identity 16 kHz" }
+    var engineSampleRate: Int { 16_000 }
+    var engineFrameSize: Int { 160 }
+
+    func initialize(withSampleRate sampleRateHz: Int) -> Bool { sampleRateHz == 16_000 }
+
+    func processSamples(_ samples: UnsafeMutablePointer<Float>, count: Int) -> NSPNoiseSuppressorResult {
+      count == 160 ? .processed : .unsupportedFrame
+    }
+
+    func releaseEngine() {}
   }
 }

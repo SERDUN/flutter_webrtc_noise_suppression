@@ -11,8 +11,8 @@ import os.log
 /// `ExternalAudioProcessingDelegate` and `AudioManager.capturePostProcessingAdapter`,
 /// noise_suppression offers `NSPNoiseSuppressor`. This plugin is the only place that joins them,
 /// so neither depends on the other. Engines are found by name in `NoiseSuppressorRegistry`; one of
-/// another rate or frame length goes through a `FormatAdapter`. Adding an engine is registering it,
-/// not changing this class.
+/// another rate or frame length goes through a `FormatAdapter`. A new engine of the plugin is
+/// registered there, not added here.
 ///
 /// flutter_webrtc keeps one `AudioManager` for the process, so the slot, and the state here, are
 /// process-wide: one attached chain covers every call, whichever engine asked. Every method call
@@ -48,8 +48,9 @@ public final class WebrtcNoiseSuppressionPlugin: NSObject, FlutterPlugin {
       }
     case "detach":
       result(Self.detach())
-    case "engines":
-      result(NoiseSuppressorRegistry.names)
+    case "registerTestEngines":
+      TestEngines.register()
+      result(nil)
     case "measure":
       let name = arguments?["engine"] as? String ?? NoiseSuppressorRegistry.rnnoise
       guard let factory = NoiseSuppressorRegistry.factory(name) else {

@@ -39,24 +39,21 @@ void main() {
     const bridge = WebrtcNoiseSuppressionBridge();
 
     await bridge.attach(
-      engines: const [WebrtcNoiseSuppressionEngine.rnnoise, WebrtcNoiseSuppressionEngine('my-engine')],
+      engines: const [WebrtcNoiseSuppressionEngine.rnnoise, WebrtcNoiseSuppressionEngine.testIdentity16k],
       dumpInputSeconds: 30,
     );
     expect(calls.single.arguments, {
-      'engines': ['rnnoise', 'my-engine'],
+      'engines': ['rnnoise', 'test-identity-16k'],
       'dumpInputSeconds': 30,
     });
   });
 
-  test('engines reads the names the native side registered', () async {
-    answer = ['my-engine', 'rnnoise'];
+  test('registerTestEngines reaches the native side', () async {
+    answer = null;
     const bridge = WebrtcNoiseSuppressionBridge();
 
-    expect(await bridge.engines(), [
-      const WebrtcNoiseSuppressionEngine('my-engine'),
-      WebrtcNoiseSuppressionEngine.rnnoise,
-    ]);
-    expect(calls.single.method, 'engines');
+    await bridge.registerTestEngines();
+    expect(calls.single.method, 'registerTestEngines');
   });
 
   test('measure names the engine and reads the native answer', () async {
