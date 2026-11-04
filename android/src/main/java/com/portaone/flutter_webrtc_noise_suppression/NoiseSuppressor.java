@@ -46,4 +46,20 @@ public interface NoiseSuppressor {
 
   /** Frees the engine. The instance is not usable after this. */
   void release();
+
+  /**
+   * The rate the engine works at, Hz, or 0 when it takes the stream's own rate (the default). The
+   * add-on reaches a rate the stream's divides by a whole number by resampling.
+   */
+  default int engineSampleRateHz() {
+    return 0;
+  }
+
+  /**
+   * Samples per frame the engine takes at {@link #engineSampleRateHz}, or 0 for frames of 10 ms
+   * (the default). The add-on gathers the stream into frames of this length.
+   */
+  default int engineFrameSize() {
+    return 0;
+  }
 }

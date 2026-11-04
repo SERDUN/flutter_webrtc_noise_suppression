@@ -5,21 +5,27 @@ import flutter_webrtc
 import NoiseSuppression
 import os.log
 
-/// Puts an `NSPNoiseSuppressor` into flutter_webrtc's capture post-processing slot.
+/// Puts a chain of `NSPNoiseSuppressor`s into flutter_webrtc's capture post-processing slot.
 ///
 /// The two plugins know nothing about each other: flutter_webrtc offers the slot through
 /// `ExternalAudioProcessingDelegate` and `AudioManager.capturePostProcessingAdapter`,
 /// noise_suppression offers `NSPNoiseSuppressor`. This plugin is the only place that joins them,
-/// so neither depends on the other and the suppressor can be replaced without touching
-/// flutter_webrtc.
+/// so neither depends on the other. Engines are found by name in `NoiseSuppressorRegistry`; one of
+/// another rate or frame length goes through a `FormatAdapter`. Adding an engine is registering it,
+/// not changing this class.
 ///
 /// flutter_webrtc keeps one `AudioManager` for the process, so the slot, and the state here, are
-/// process-wide: one attached processor covers every call, whichever engine asked. Every method
-/// call runs on the main thread.
+/// process-wide: one attached chain covers every call, whichever engine asked. Every method call
+/// runs on the main thread. Engines are created on one serial queue, since a model may take most of
+/// a second to load, and go into the slot back on the main thread; a later attach or a detach makes
+/// an attach still creating its engines answer false and free them.
 public final class WebrtcNoiseSuppressionPlugin: NSObject, FlutterPlugin {
   private static let channelName = "com.portaone.flutter_webrtc_noise_suppression"
   private static let log = OSLog(subsystem: "com.portaone.flutter_webrtc_noise_suppression", category: "WebrtcNoiseSuppression")
-  private static var processor: SuppressorFrameProcessor?
+  private static let worker = DispatchQueue(label: "com.portaone.flutter_webrtc_noise_suppression.create", qos: .userInitiated)
+  private static let slotRate = 48_000
+  private static var processor: ChainProcessor?
+  private static var generation = 0
   // Two lines a call, at the default level: the device log keeps and streams it for any subsystem,
   // while an info line of a subsystem it has no configuration for may never reach a reader.
 
@@ -29,25 +35,30 @@ public final class WebrtcNoiseSuppressionPlugin: NSObject, FlutterPlugin {
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    let arguments = call.arguments as? [String: Any]
     switch call.method {
     case "attach":
-      let engine = (call.arguments as? [String: Any])?["engine"] as? String
-      guard let model = Self.model(engine) else {
-        result(FlutterError(code: "unknown_engine", message: "unknown engine \(engine ?? "")", details: nil))
-        return
+      let names = Self.engineNames(arguments)
+      if names.isEmpty {
+        result(FlutterError(code: "no_engine", message: "attach names no engine", details: nil))
+      } else if let unknown = names.first(where: { NoiseSuppressorRegistry.factory($0) == nil }) {
+        result(FlutterError(code: "unknown_engine", message: "unknown engine \(unknown)", details: nil))
+      } else {
+        Self.attach(names, result: result)
       }
-      result(Self.attach(model))
     case "detach":
       result(Self.detach())
+    case "engines":
+      result(NoiseSuppressorRegistry.names)
     case "measure":
-      let engine = (call.arguments as? [String: Any])?["engine"] as? String
-      guard let model = Self.model(engine) else {
-        result(FlutterError(code: "unknown_engine", message: "unknown engine \(engine ?? "")", details: nil))
+      let name = arguments?["engine"] as? String ?? NoiseSuppressorRegistry.rnnoise
+      guard let factory = NoiseSuppressorRegistry.factory(name) else {
+        result(FlutterError(code: "unknown_engine", message: "unknown engine \(name)", details: nil))
         return
       }
       // 3 s of audio is a few hundred ms of work on a slow phone: off the main thread.
       DispatchQueue.global(qos: .userInitiated).async {
-        let measured = Self.measure(model)
+        let measured = Self.measure(name, factory)
         DispatchQueue.main.async { result(measured) }
       }
     default:
@@ -55,43 +66,76 @@ public final class WebrtcNoiseSuppressionPlugin: NSObject, FlutterPlugin {
     }
   }
 
-  /// The engine names of the Dart API; a missing one is RNNoise v0.1.1.
-  private static func model(_ engine: String?) -> NSPRnnoiseModel? {
-    switch engine {
-    case nil, "rnnoise": return NSPRnnoiseModel.v0_1
-    default: return nil
+  /// The chain a call names: `engines`, or the older single `engine`, or RNNoise v0.1.1.
+  private static func engineNames(_ arguments: [String: Any]?) -> [String] {
+    if let names = arguments?["engines"] as? [String] { return names }
+    return [arguments?["engine"] as? String ?? NoiseSuppressorRegistry.rnnoise]
+  }
+
+  /// Puts a chain of the engines `names`, in that order, into the slot, and answers true when it is
+  /// there. A chain already in the slot is taken out first: the slot holds one chain at a time. The
+  /// same chain again is left as it is.
+  private static func attach(_ names: [String], result: @escaping FlutterResult) {
+    if let attached = processor, attached.names == names {
+      // Still the chain asked for last: an attach of another chain still creating is dropped.
+      generation += 1
+      result(true)
+      return
+    }
+    generation += 1
+    let asked = generation
+    worker.async {
+      let start = DispatchTime.now().uptimeNanoseconds
+      let stages = create(names)
+      let createMs = (DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
+      DispatchQueue.main.async {
+        guard let stages = stages else {
+          result(false)
+          return
+        }
+        guard asked == generation else {
+          // A later attach or a detach came while these were created.
+          stages.forEach { $0.suppressor.releaseEngine() }
+          result(false)
+          return
+        }
+        if processor != nil { _ = remove() }
+        let created = ChainProcessor(names: names, stages: stages)
+        AudioManager.sharedInstance().capturePostProcessingAdapter.addProcessing(created)
+        processor = created
+        let engines = stages.map { $0.suppressor.engine }.joined(separator: " > ")
+        os_log("attached %{public}@ create_ms=%llu", log: log, type: .default, engines, createMs)
+        result(true)
+      }
     }
   }
 
-  /// Returns true when a suppressor of `model` is in the slot after the call. One of another model is
-  /// taken out first: the slot holds one suppressor at a time.
-  private static func attach(_ model: NSPRnnoiseModel) -> Bool {
-    if let attached = processor {
-      if attached.model == model { return true }
-      _ = detach()
+  /// Fresh engines of `names`, each in a `FormatAdapter`; nil (and none left) when one fails.
+  private static func create(_ names: [String]) -> [Stage]? {
+    var stages = [Stage]()
+    for name in names {
+      guard let suppressor = NoiseSuppressorRegistry.factory(name)?() else {
+        // The call keeps the platform processing only, which is what it had before.
+        os_log("not attached: engine %{public}@ not created", log: log, type: .error, name)
+        stages.forEach { $0.suppressor.releaseEngine() }
+        return nil
+      }
+      stages.append(Stage(name: name, suppressor: FormatAdapter(suppressor)))
     }
-    guard let suppressor = NSPRnnoiseSuppressor(model: model) else {
-      // The call keeps the platform processing only, which is what it had before.
-      os_log("not attached: suppressor not created", log: log, type: .error)
-      return false
-    }
-    let created = SuppressorFrameProcessor(suppressor: suppressor, model: model)
-    AudioManager.sharedInstance().capturePostProcessingAdapter.addProcessing(created)
-    processor = created
-    os_log("attached %{public}@", log: log, type: .default, suppressor.engine)
-    return true
+    return stages
   }
 
-  /// Runs 3 s of white noise through a fresh suppressor of `model`, frame by frame as the slot would:
-  /// the time per frame on this phone and the attenuation once the model has settled (the first
-  /// second is skipped). A check of the engine on a device, not of call quality.
-  private static func measure(_ model: NSPRnnoiseModel) -> Any {
-    guard let suppressor = NSPRnnoiseSuppressor(model: model) else {
-      return FlutterError(code: "no_engine", message: "suppressor not created", details: nil)
+  /// Runs 3 s of white noise through a fresh engine, frame by frame as the slot would, through the
+  /// same `FormatAdapter`: the time per frame on this phone and the attenuation once the model has
+  /// settled (the first second is skipped). A check of the engine on a device, not of call quality.
+  private static func measure(_ name: String, _ factory: NoiseSuppressorRegistry.Factory) -> Any {
+    guard let created = factory() else {
+      return FlutterError(code: "no_engine", message: "engine \(name) not created", details: nil)
     }
+    let suppressor = FormatAdapter(created)
     defer { suppressor.releaseEngine() }
-    _ = suppressor.initialize(withSampleRate: NSPRnnoiseSuppressor.sampleRate)
-    let n = NSPRnnoiseSuppressor.frameSize
+    _ = suppressor.initialize(withSampleRate: slotRate)
+    let n = slotRate / 100
     var frame = [Float](repeating: 0, count: n)
     var seed: UInt32 = 12345
     var times = [Double]()
@@ -116,90 +160,53 @@ public final class WebrtcNoiseSuppressionPlugin: NSObject, FlutterPlugin {
       "meanUs": times.reduce(0, +) / Double(times.count),
       "p99Us": times[times.count * 99 / 100],
       "attenuationDb": 20 * log10(inRms / outRms),
+      "latencyMs": Double(suppressor.latencySamples) * 1000 / Double(slotRate),
     ] as [String: Any]
   }
 
-  /// Returns true when a suppressor was in the slot and has been removed.
+  /// Returns true when a chain was in the slot and has been removed; an attach still creating is
+  /// dropped.
   private static func detach() -> Bool {
+    generation += 1
+    return remove()
+  }
+
+  private static func remove() -> Bool {
     guard let attached = processor else { return false }
     // The adapter calls processors under the lock that removeProcessing: takes, so once it
-    // returns no frame is in flight and the engine can be freed.
+    // returns no frame is in flight and the engines can be freed.
     AudioManager.sharedInstance().capturePostProcessingAdapter.removeProcessing(attached)
-    attached.releaseEngine()
+    attached.releaseEngines()
     processor = nil
-    os_log("detached: %{public}@", log: log, type: .default, attached.summary())
+    for line in attached.summary() {
+      os_log("detached: %{public}@", log: log, type: .default, line)
+    }
     return true
   }
 }
 
-/// Adapts flutter_webrtc's frames to `NSPNoiseSuppressor`.
-///
-/// libwebrtc calls it on the capture thread with 10 ms of audio after its own processing (and,
-/// with voice processing on, after Apple's echo cancellation, noise suppression and gain
-/// control), right before the encoder. The adapter serializes all three callbacks under one
-/// lock. The buffer of channel 0 is full band even when the frame reports several bands: the
-/// post-processor runs after the bands were merged back.
-private final class SuppressorFrameProcessor: NSObject, ExternalAudioProcessingDelegate {
-  private let suppressor: NSPNoiseSuppressor
-  let model: NSPRnnoiseModel
-  private var initialized = false
-  private var processed = 0
-  private var unchanged = 0
-  private var lastResult: NSPNoiseSuppressorResult?
-  private var announced = ""
+/// One engine of a chain and what it did in the call.
+private final class Stage {
+  let name: String
+  let suppressor: NSPNoiseSuppressor
+  var processed = 0
+  var unchanged = 0
+  var lastResult: NSPNoiseSuppressorResult?
 
   // Time per frame in the call, without allocating on the audio thread: 200 us buckets up to 20 ms,
   // the last one for everything longer.
-  private static let bucketNs: UInt64 = 200_000
-  private static let bucketCount = 100
-  private var buckets = [Int](repeating: 0, count: SuppressorFrameProcessor.bucketCount + 1)
-  private var totalNs: UInt64 = 0
-  private var maxNs: UInt64 = 0
+  static let bucketNs: UInt64 = 200_000
+  static let bucketCount = 100
+  var buckets = [Int](repeating: 0, count: Stage.bucketCount + 1)
+  var totalNs: UInt64 = 0
+  var maxNs: UInt64 = 0
 
-  init(suppressor: NSPNoiseSuppressor, model: NSPRnnoiseModel) {
+  init(name: String, suppressor: NSPNoiseSuppressor) {
+    self.name = name
     self.suppressor = suppressor
-    self.model = model
   }
 
-  func audioProcessingInitialize(withSampleRate sampleRateHz: Int, channels: Int) {
-    note("initialize(\(sampleRateHz), \(channels))")
-    suppressor.initialize(withSampleRate: sampleRateHz)
-    initialized = true
-  }
-
-  func audioProcessingProcess(_ audioBuffer: RTCAudioBuffer) {
-    guard audioBuffer.channels > 0 else { return }
-    let frames = audioBuffer.frames
-    // A processor added while the microphone is already running is never told the rate: the
-    // adapter announces it only when the stream starts. A frame is 10 ms, so its length gives the
-    // rate. The first initialize allocates nothing.
-    if !initialized {
-      suppressor.initialize(withSampleRate: frames * 100)
-      initialized = true
-    }
-    // A frame the engine cannot take comes back unchanged, so the call keeps the audio it would
-    // have had without the suppressor.
-    let start = DispatchTime.now().uptimeNanoseconds
-    let result = suppressor.processSamples(audioBuffer.rawBuffer(forChannel: 0), count: frames)
-    let spent = DispatchTime.now().uptimeNanoseconds - start
-    totalNs += spent
-    maxNs = max(maxNs, spent)
-    buckets[min(Int(spent / Self.bucketNs), Self.bucketCount)] += 1
-    if result == .processed { processed += 1 } else { unchanged += 1 }
-    if result != lastResult {
-      lastResult = result
-      note("result \(result.rawValue) at frame \(processed + unchanged) (\(frames) samples, \(audioBuffer.bands) bands)")
-    }
-  }
-
-  func audioProcessingRelease() {
-    // The engine belongs to the plugin and is freed on detach.
-  }
-
-  /// The call's one log line: how many frames were denoised and how many left unchanged (a rate or
-  /// length the engine does not take), and what the slot announced. Read after the processor left
-  /// the slot, so no frame is counted at the same time.
-  func summary() -> String {
+  func summary(_ announced: String) -> String {
     let frames = processed + unchanged
     let meanUs = frames == 0 ? 0 : totalNs / UInt64(frames) / 1000
     let overBudget = buckets[Int(10_000_000 / Self.bucketNs)...].reduce(0, +)
@@ -220,9 +227,74 @@ private final class SuppressorFrameProcessor: NSObject, ExternalAudioProcessingD
     }
     return UInt64(Self.bucketCount) * Self.bucketNs / 1000
   }
+}
 
-  func releaseEngine() {
-    suppressor.releaseEngine()
+/// Adapts flutter_webrtc's frames to a chain of `NSPNoiseSuppressor`s: each frame goes through
+/// every engine in order, in place.
+///
+/// libwebrtc calls it on the capture thread with 10 ms of audio after its own processing (and,
+/// with voice processing on, after Apple's echo cancellation, noise suppression and gain
+/// control), right before the encoder. The adapter serializes all three callbacks under one
+/// lock. The buffer of channel 0 is full band even when the frame reports several bands: the
+/// post-processor runs after the bands were merged back.
+private final class ChainProcessor: NSObject, ExternalAudioProcessingDelegate {
+  let names: [String]
+  private let stages: [Stage]
+  private var initialized = false
+  private var announced = ""
+
+  init(names: [String], stages: [Stage]) {
+    self.names = names
+    self.stages = stages
+  }
+
+  func audioProcessingInitialize(withSampleRate sampleRateHz: Int, channels: Int) {
+    note("initialize(\(sampleRateHz), \(channels))")
+    stages.forEach { _ = $0.suppressor.initialize(withSampleRate: sampleRateHz) }
+    initialized = true
+  }
+
+  func audioProcessingProcess(_ audioBuffer: RTCAudioBuffer) {
+    guard audioBuffer.channels > 0 else { return }
+    let frames = audioBuffer.frames
+    // A processor added while the microphone is already running is never told the rate: the
+    // adapter announces it only when the stream starts. A frame is 10 ms, so its length gives the
+    // rate.
+    if !initialized {
+      stages.forEach { _ = $0.suppressor.initialize(withSampleRate: frames * 100) }
+      initialized = true
+    }
+    // A frame an engine cannot take comes back unchanged, so the call keeps the audio it would have
+    // had without that engine.
+    let samples = audioBuffer.rawBuffer(forChannel: 0)
+    for stage in stages {
+      let start = DispatchTime.now().uptimeNanoseconds
+      let result = stage.suppressor.processSamples(samples, count: frames)
+      let spent = DispatchTime.now().uptimeNanoseconds - start
+      stage.totalNs += spent
+      stage.maxNs = max(stage.maxNs, spent)
+      stage.buckets[min(Int(spent / Stage.bucketNs), Stage.bucketCount)] += 1
+      if result == .processed { stage.processed += 1 } else { stage.unchanged += 1 }
+      if result != stage.lastResult {
+        stage.lastResult = result
+        note("\(stage.name): result \(result.rawValue) at frame \(stage.processed + stage.unchanged) (\(frames) samples, \(audioBuffer.bands) bands)")
+      }
+    }
+  }
+
+  func audioProcessingRelease() {
+    // The engines belong to the plugin and are freed on detach.
+  }
+
+  /// One log line per engine: how many frames were denoised and how many left unchanged (a rate or
+  /// length the engine does not take), the time per frame, and what the slot announced. Read after
+  /// the processor left the slot, so no frame is counted at the same time.
+  func summary() -> [String] {
+    stages.map { $0.summary(announced) }
+  }
+
+  func releaseEngines() {
+    stages.forEach { $0.suppressor.releaseEngine() }
   }
 
   private func note(_ event: String) {

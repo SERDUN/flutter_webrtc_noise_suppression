@@ -30,11 +30,37 @@ void main() {
     expect(await bridge.attach(), isTrue);
     expect(await bridge.detach(), isTrue);
     expect(calls.map((c) => c.method), ['attach', 'detach']);
-    expect(calls.first.arguments, {'engine': 'rnnoise'});
+    expect(calls.first.arguments, {
+      'engines': ['rnnoise'],
+    });
+  });
+
+  test('attach sends a chain in its order', () async {
+    const bridge = WebrtcNoiseSuppressionBridge();
+
+    await bridge.attach(
+      engines: const [WebrtcNoiseSuppressionEngine.rnnoise, WebrtcNoiseSuppressionEngine('my-engine')],
+      dumpInputSeconds: 30,
+    );
+    expect(calls.single.arguments, {
+      'engines': ['rnnoise', 'my-engine'],
+      'dumpInputSeconds': 30,
+    });
+  });
+
+  test('engines reads the names the native side registered', () async {
+    answer = ['my-engine', 'rnnoise'];
+    const bridge = WebrtcNoiseSuppressionBridge();
+
+    expect(await bridge.engines(), [
+      const WebrtcNoiseSuppressionEngine('my-engine'),
+      WebrtcNoiseSuppressionEngine.rnnoise,
+    ]);
+    expect(calls.single.method, 'engines');
   });
 
   test('measure names the engine and reads the native answer', () async {
-    answer = {'engine': 'rnnoise 0.1.1', 'meanUs': 331, 'p99Us': 465.5, 'attenuationDb': 15.1};
+    answer = {'engine': 'rnnoise 0.1.1', 'meanUs': 331, 'p99Us': 465.5, 'attenuationDb': 15.1, 'latencyMs': 0};
     const bridge = WebrtcNoiseSuppressionBridge();
 
     final m = await bridge.measure(engine: WebrtcNoiseSuppressionEngine.rnnoise);
@@ -44,6 +70,7 @@ void main() {
     expect(m.meanUs, 331);
     expect(m.p99Us, 465.5);
     expect(m.attenuationDb, 15.1);
+    expect(m.latencyMs, 0);
   });
 
   test('a native side that answers nothing counts as not attached', () async {

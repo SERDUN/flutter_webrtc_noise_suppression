@@ -36,6 +36,7 @@ android {
 
     sourceSets {
         main.java.srcDirs += "src/main/kotlin"
+        test.java.srcDirs += "src/test/kotlin"
     }
 
     // The C core (noise_suppressor.h + RNNoise) is one copy, inside the iOS Swift package, which
@@ -60,6 +61,9 @@ android {
         // flutter_webrtc's own copy is the one loaded. The version is upstream flutter_webrtc
         // 1.6.3's; only the AudioProcessing interface is compiled against.
         compileOnly("io.github.webrtc-sdk:android:150.7871.04")
+
+        // JVM tests of the format adapter and the registry: no phone, no native library.
+        testImplementation("junit:junit:4.13.2")
     }
 }
 

@@ -33,6 +33,14 @@
   ns_destroy(_suppressor);
 }
 
+- (NSInteger)engineSampleRate {
+  return ns_sample_rate();
+}
+
+- (NSInteger)engineFrameSize {
+  return ns_frame_size();
+}
+
 - (NSString*)engine {
   return [NSString stringWithUTF8String:ns_engine_name((NsEngine)_model)];
 }
