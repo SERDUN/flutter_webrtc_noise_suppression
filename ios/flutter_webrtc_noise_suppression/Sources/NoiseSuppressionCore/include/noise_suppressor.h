@@ -5,9 +5,8 @@
  * any other audio stack: a caller that owns an audio pipeline (a bridge to
  * flutter_webrtc, a recorder) hands frames in and gets them back denoised.
  *
- * Engines (NsEngine), both RNNoise (xiph, BSD-3-Clause): v0.1.1, and the 2025
- * code of xiph/rnnoise main with its "little" model. Both work on 48 kHz mono
- * only, exactly 480 samples (10 ms) per frame, float samples on the int16 scale
+ * Engines (NsEngine): RNNoise v0.1.1 (xiph, BSD-3-Clause). It works on 48 kHz
+ * mono only, exactly 480 samples (10 ms) per frame, float samples on the int16 scale
  * (-32768..32767). A frame of any other shape is left unchanged and the call
  * says so, so the caller can fall back to its own processing.
  *
@@ -28,9 +27,7 @@ typedef struct NsSuppressor NsSuppressor;
 
 /* The engine a suppressor runs. */
 typedef enum NsEngine {
-  NS_ENGINE_RNNOISE = 0,        /* RNNoise v0.1.1: ~90 KB of weights, the cheapest */
-  NS_ENGINE_RNNOISE_LITTLE = 1  /* RNNoise main (2025), little model: ~5 MB of weights, about 2.3x
-                                   the CPU of v0.1.1, much stronger on other voices */
+  NS_ENGINE_RNNOISE = 0 /* RNNoise v0.1.1: ~90 KB of weights */
 } NsEngine;
 
 /* Result of ns_process. */

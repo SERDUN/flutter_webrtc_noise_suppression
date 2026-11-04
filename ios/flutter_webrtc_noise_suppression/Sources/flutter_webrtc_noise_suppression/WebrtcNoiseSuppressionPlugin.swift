@@ -59,7 +59,6 @@ public final class WebrtcNoiseSuppressionPlugin: NSObject, FlutterPlugin {
   private static func model(_ engine: String?) -> NSPRnnoiseModel? {
     switch engine {
     case nil, "rnnoise": return NSPRnnoiseModel.v0_1
-    case "rnnoise-little": return NSPRnnoiseModel.little
     default: return nil
     }
   }

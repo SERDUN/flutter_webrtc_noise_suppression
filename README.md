@@ -7,15 +7,14 @@ A [flutter_webrtc](https://github.com/flutter-webrtc/flutter-webrtc) add-on: noi
 | `WebrtcNoiseSuppressionEngine` | What | Weights | CPU (M5 host, per 10 ms frame) |
 |---|---|---|---|
 | `rnnoise` (default) | RNNoise v0.1.1 | ~90 KB | ~80 us |
-| `rnnoiseLittle` | RNNoise main `70f1d25` (2025) with its little model: much stronger on other voices (babble, a colleague nearby) | ~5.7 MB per ABI | ~185 us |
 
-`measure(engine:)` gives the time per frame and the attenuation on the device it runs on. The two RNNoise versions share global symbol names; the newer one is compiled only through `ios/flutter_webrtc_noise_suppression/Sources/NoiseSuppressionRnnoise2/units/`, which rename its globals (`rnnoise2_prefix.h`), and with its own include path, because both ship an `rnnoise.h`.
+`measure(engine:)` gives the time per frame and the attenuation on the device it runs on.
 
 ## Inside
 
 | Layer | Where | Knows about |
 |---|---|---|
-| C core: `noise_suppressor.h` over RNNoise (48 kHz, 480-sample frames), engine chosen at creation | `ios/flutter_webrtc_noise_suppression/Sources/NoiseSuppressionCore` and `.../NoiseSuppressionRnnoise2` (Android compiles the same files, `android/src/main/cpp`) | nothing |
+| C core: `noise_suppressor.h` over RNNoise (48 kHz, 480-sample frames), engine chosen at creation | `ios/flutter_webrtc_noise_suppression/Sources/NoiseSuppressionCore` (Android compiles the same files, `android/src/main/cpp`) | nothing |
 | The suppressor's interface: `NoiseSuppressor` / `RnnoiseSuppressor` (Android, JNI), `NSPNoiseSuppressor` / `NSPRnnoiseSuppressor` (iOS) | `android/src/main/java`, `ios/.../Sources/NoiseSuppression` | the C core only |
 | The add-on: `WebrtcNoiseSuppressionPlugin`, which takes flutter_webrtc's captured frames and hands them to the interface | `android/src/main/kotlin`, `ios/.../Sources/flutter_webrtc_noise_suppression` | flutter_webrtc and the interface |
 | Dart: `WebrtcNoiseSuppressionBridge` (`attach`, `detach`) | `lib/` | the channel |

@@ -1,6 +1,6 @@
 ## Unreleased
 
-* Second engine, `rnnoiseLittle`: RNNoise main (2025) with its little model, much stronger on other voices; `measure(engine:)` times an engine on the device.
+* `measure(engine:)` times an engine on the device.
 
 ## 0.0.1
 

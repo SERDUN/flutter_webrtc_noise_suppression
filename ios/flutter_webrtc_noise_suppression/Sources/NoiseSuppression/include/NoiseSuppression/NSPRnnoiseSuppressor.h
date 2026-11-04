@@ -6,11 +6,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// The RNNoise build and model a suppressor runs; the values are the C core's NsEngine.
 typedef NS_ENUM(NSInteger, NSPRnnoiseModel) {
-  /// RNNoise v0.1.1: the cheapest.
+  /// RNNoise v0.1.1.
   NSPRnnoiseModelV01 NS_SWIFT_NAME(v0_1) = 0,
-  /// RNNoise main (2025) with its little model: about 2.3x the CPU of v0.1.1, much stronger on
-  /// other voices.
-  NSPRnnoiseModelLittle NS_SWIFT_NAME(little) = 1,
 };
 
 /// NSPNoiseSuppressor on RNNoise: 48 kHz mono, 480 samples per frame.

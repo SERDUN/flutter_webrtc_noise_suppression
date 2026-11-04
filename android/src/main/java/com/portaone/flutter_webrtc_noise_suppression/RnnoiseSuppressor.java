@@ -6,11 +6,8 @@ import java.nio.ByteBuffer;
 public final class RnnoiseSuppressor implements NoiseSuppressor {
   /** The RNNoise build and model a suppressor runs; the ids are the C core's NsEngine. */
   public enum Model {
-    /** RNNoise v0.1.1: the cheapest. */
-    V0_1(0),
-    /** RNNoise main (2025) with its little model: about 2.3x the CPU of v0.1.1, much stronger on
-     * other voices. */
-    LITTLE(1);
+    /** RNNoise v0.1.1. */
+    V0_1(0);
 
     final int id;
 
