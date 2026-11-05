@@ -41,6 +41,15 @@ void main() {
     await pc.close();
   });
 
+  testWidgets('RNNoise v0.2 goes into the slot beside v0.1.1', (tester) async {
+    final pc = await createPeerConnection({'iceServers': []});
+
+    expect(await bridge.attach(engines: const [WebrtcNoiseSuppressionEngine.rnnoise02]), isTrue);
+    expect(await bridge.detach(), isTrue);
+
+    await pc.close();
+  });
+
   testWidgets('the suppression level is taken by the slot', (tester) async {
     final pc = await createPeerConnection({'iceServers': []});
 
@@ -78,12 +87,14 @@ void main() {
   });
 
   testWidgets('every engine runs on this device within the frame budget', (tester) async {
-    final m = await bridge.measure();
-    // The lines a device run is read for: the time per frame on this phone.
-    debugPrint('measure: $m');
-    expect(m.attenuationDb, greaterThan(10), reason: '$m');
-    expect(m.p99Us, lessThan(10000), reason: 'a 10 ms frame must take less than 10 ms: $m');
-    expect(m.latencyMs, 0);
+    for (final engine in const [WebrtcNoiseSuppressionEngine.rnnoise, WebrtcNoiseSuppressionEngine.rnnoise02]) {
+      final m = await bridge.measure(engine: engine);
+      // The lines a device run is read for: the time per frame on this phone.
+      debugPrint('measure: $m');
+      expect(m.attenuationDb, greaterThan(10), reason: '$m');
+      expect(m.p99Us, lessThan(10000), reason: 'a 10 ms frame must take less than 10 ms: $m');
+      expect(m.latencyMs, 0);
+    }
 
     // White noise through a 16 kHz engine that changes nothing: the band above 7.2 kHz is filtered
     // out (about 5 dB of white noise), the rest comes back, one engine frame and the filters later.

@@ -9,6 +9,10 @@ class WebrtcNoiseSuppressionEngine {
   /// RNNoise v0.1.1: strong on steady and impulsive noise, weak on other voices.
   static const rnnoise = WebrtcNoiseSuppressionEngine._('rnnoise');
 
+  /// RNNoise v0.2 (2024) with its standard model, beside [rnnoise] for evaluation: much larger
+  /// weights and more CPU; how it sounds in a call is being measured.
+  static const rnnoise02 = WebrtcNoiseSuppressionEngine._('rnnoise-0.2');
+
   /// The plugin's own device tests: 16 kHz in 10 ms frames, left as they are, so what comes back is
   /// the format adapter's. Registered only after [WebrtcNoiseSuppressionBridge.registerTestEngines].
   @visibleForTesting
