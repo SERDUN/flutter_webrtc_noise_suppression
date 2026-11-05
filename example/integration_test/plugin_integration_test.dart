@@ -41,6 +41,18 @@ void main() {
     await pc.close();
   });
 
+  testWidgets('the suppression level is taken by the slot', (tester) async {
+    final pc = await createPeerConnection({'iceServers': []});
+
+    expect(await bridge.attach(suppressionLevel: 0.5), isTrue);
+    await bridge.setSuppressionLevel(0.25);
+    expect(await bridge.attach(suppressionLevel: 1.0), isTrue, reason: 'the same chain takes the level');
+    expect(await bridge.detach(), isTrue);
+    await bridge.setSuppressionLevel(1.0);
+
+    await pc.close();
+  });
+
   testWidgets('an attach overtaken while it creates answers false', (tester) async {
     final pc = await createPeerConnection({'iceServers': []});
 

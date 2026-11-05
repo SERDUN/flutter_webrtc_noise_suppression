@@ -10,7 +10,8 @@
  * (-32768..32767). A frame of any other shape is left unchanged and the call
  * says so, so the caller can fall back to its own processing.
  *
- * Threading. Calls on one suppressor must be serialized by the caller.
+ * Threading. Calls on one suppressor must be serialized by the caller, except
+ * ns_set_suppression_level, which any thread may call while ns_process runs.
  * ns_process never allocates and is meant for the audio thread. ns_create,
  * ns_destroy and ns_reset allocate or free: call them off the audio thread, or
  * where the pipeline already reinitializes (a rate change), never per frame.
@@ -72,6 +73,18 @@ void ns_destroy(NsSuppressor* suppressor);
  * or suppressor is NULL; on 0 the old state is kept.
  */
 int ns_reset(NsSuppressor* suppressor);
+
+/*
+ * How much of the engine's output a frame carries: 1 is the denoised voice
+ * (the default), 0 the input, one frame late like the output, and in between
+ * a mix of the two. A value outside 0..1 is clamped. Safe from any thread;
+ * the change is ramped over the next frame, so it does not click. NULL is
+ * ignored. Kept by ns_reset.
+ */
+void ns_set_suppression_level(NsSuppressor* suppressor, float level);
+
+/* The level ns_set_suppression_level set; 1 for NULL. */
+float ns_suppression_level(const NsSuppressor* suppressor);
 
 /*
  * Denoises one frame in place. sample_rate_hz and num_samples describe the

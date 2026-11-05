@@ -57,18 +57,36 @@ class WebrtcNoiseSuppressionBridge {
   /// (they are created off the main thread, a model may take most of a second). An engine the
   /// native side does not have fails the call with a [PlatformException] `unknown_engine`.
   ///
+  /// [suppressionLevel] is how much of the denoised signal goes out, see [setSuppressionLevel].
+  ///
   /// [dumpInputSeconds] is diagnostics, Android only: the first that many seconds of what reaches
   /// the slot, before the suppressor, are kept and written on detach as a 48 kHz 16-bit WAV into the
   /// app's external files directory (`adb pull` reads it from a release build).
   Future<bool> attach({
     List<WebrtcNoiseSuppressionEngine> engines = const [WebrtcNoiseSuppressionEngine.rnnoise],
+    double suppressionLevel = 1.0,
     int dumpInputSeconds = 0,
   }) async =>
       await _channel.invokeMethod<bool>('attach', {
         'engines': [for (final e in engines) e.wire],
+        'suppressionLevel': _checked(suppressionLevel),
         if (dumpInputSeconds > 0) 'dumpInputSeconds': dumpInputSeconds,
       }) ??
       false;
+
+  /// Sets how much of the denoised signal goes out, from 0.0 (the voice as it reached the slot, one
+  /// engine frame late) to 1.0 (fully denoised, the default). It applies at once to the chain in the
+  /// slot, ramped over one frame so that it does not click; every [attach] sets the level again, to
+  /// 1.0 unless it names another. Throws a [RangeError] outside 0.0..1.0.
+  Future<void> setSuppressionLevel(double level) =>
+      _channel.invokeMethod<void>('setSuppressionLevel', {'level': _checked(level)});
+
+  static double _checked(double level) {
+    if (level.isNaN || level < 0.0 || level > 1.0) {
+      throw RangeError.value(level, 'level', 'must be within 0.0..1.0');
+    }
+    return level;
+  }
 
   /// Registers the engines of the plugin's own device tests ([WebrtcNoiseSuppressionEngine.testIdentity16k]).
   @visibleForTesting
