@@ -38,7 +38,7 @@ Which rates the slot can see, with the codecs of the built-in factory both platf
 
 iLBC, iSAC and G.729 are not in this build; a far end that insists on one gets a transcoding stand or no call. The microphone's own rate counts too (the lower of the two wins): a Bluetooth headset records at 8 or 16 kHz, so 16 kHz again; with `bypassVoiceProcessing` Android records at the phone's native rate, usually 48 or 44.1 kHz, so 48 kHz. 32 kHz, which the module also runs at, would need a microphone recording at 32 kHz; 48 kHz is not a whole multiple of it, so RNNoise would leave such a call unchanged. No phone seen here does that. G.711 and G.722 were measured on Android only; a Bluetooth call is not measured.
 
-The engine hears the voice after echo cancellation, the platform's noise suppression and gain control, and is the last thing that changes it before the encoder. That is the place an extra denoiser does not hurt echo cancellation; a hook before the processing module (raw microphone samples, as `rtc_rnnoise` on pub.dev takes them) would feed the echo canceller a signal it no longer recognizes.
+The engine hears the voice after echo cancellation, the platform's noise suppression and gain control, and is the last thing that changes it before the encoder. That is the place an extra denoiser does not hurt echo cancellation; a hook before the processing module (raw microphone samples) would feed the echo canceller a signal it no longer recognizes.
 
 What sits before the slot, read in the code (libwebrtc of webrtc-sdk `m150_release`, the `150.7871.04` flutter_webrtc 1.6.3 pins; flutter_webrtc 1.6.3):
 
@@ -242,7 +242,7 @@ Diagnostics, Android only: `attach(dumpInputSeconds: 300)` keeps what reaches th
 make test                 # the C core on the host: white noise attenuated by more than 10 dB, bad frames untouched
 flutter analyze && flutter test
 cd example/android && ./gradlew :flutter_webrtc_noise_suppression:testDebugUnitTest   # the format adapter and the registry on the JVM (JDK 17-21)
-cd example && flutter test integration_test   # on a device: attach and detach, a chain with the test engine, an unknown engine, an attach overtaken, measure of both
+cd example && FLUTTER_WEBRTC_NS_RNNOISE02=1 flutter test integration_test   # on a device (the example's Android build enables RNNoise v0.2 in its gradle.properties; iOS needs the variable): attach and detach, a chain with the test engine, an unknown engine, an attach overtaken, measure of both
 cd example && flutter build ios --config-only --debug && cd ios && xcodebuild test -workspace Runner.xcworkspace \
   -scheme Runner -destination id=<iPhone udid> -only-testing:RunnerTests DEVELOPMENT_TEAM=<team> -allowProvisioningUpdates
 # the format adapter in Swift and the suppressor on an iPhone
