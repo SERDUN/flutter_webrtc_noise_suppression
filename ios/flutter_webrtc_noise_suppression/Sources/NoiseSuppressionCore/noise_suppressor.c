@@ -6,12 +6,28 @@
 
 #include "rnnoise.h"
 
+/* RNNoise v0.2 is in the build only when it was asked for (NS_WITH_RNNOISE02): it adds about 5 MB
+ * of weights. Without it the engine has no name and is never created. */
+#ifdef NS_WITH_RNNOISE02
+#include "ns_rnnoise02.h"
+#else
+typedef struct NsRnnoise02 NsRnnoise02;
+static NsRnnoise02* ns_rnnoise02_create(void) { return NULL; }
+static void ns_rnnoise02_destroy(NsRnnoise02* state) { (void)state; }
+static float ns_rnnoise02_process_frame(NsRnnoise02* state, float* samples) {
+  (void)state;
+  (void)samples;
+  return 0.0f;
+}
+#endif
+
 #define NS_RATE 48000
 #define NS_FRAME 480
 
 struct NsSuppressor {
   NsEngine engine;
-  DenoiseState* state;
+  DenoiseState* state; /* v0.1.1 */
+  NsRnnoise02* v02;
   /* RNNoise's output is one frame behind its input, so a mix with the input
    * as it arrives would comb-filter the voice; `dry` holds the frame before. */
   float dry[NS_FRAME];
@@ -30,20 +46,47 @@ const char* ns_engine_name(NsEngine engine) {
   switch (engine) {
     case NS_ENGINE_RNNOISE:
       return "rnnoise 0.1.1";
+    case NS_ENGINE_RNNOISE_02:
+#ifdef NS_WITH_RNNOISE02
+      return "rnnoise 0.2";
+#else
+      return NULL;
+#endif
   }
   return NULL;
 }
 
-static void warm_up(void) {
+/* A fresh state of `engine`; 0 when it cannot be allocated. */
+static int new_state(NsEngine engine, DenoiseState** v01, NsRnnoise02** v02) {
+  if (engine == NS_ENGINE_RNNOISE) {
+    *v01 = rnnoise_create(NULL);
+    return *v01 != NULL;
+  }
+  *v02 = ns_rnnoise02_create();
+  return *v02 != NULL;
+}
+
+static void free_state(DenoiseState* v01, NsRnnoise02* v02) {
+  if (v01 != NULL) rnnoise_destroy(v01);
+  ns_rnnoise02_destroy(v02);
+}
+
+static float run(NsEngine engine, DenoiseState* v01, NsRnnoise02* v02, float* samples) {
+  if (engine == NS_ENGINE_RNNOISE) return rnnoise_process_frame(v01, samples, samples);
+  return ns_rnnoise02_process_frame(v02, samples);
+}
+
+static void warm_up(NsEngine engine) {
   /* RNNoise v0.1.1 builds its FFT tables in process-wide storage on the first
    * frame it processes, with malloc. One frame of silence here keeps that off
-   * the audio thread. */
-  DenoiseState* scratch = rnnoise_create(NULL);
-  if (scratch == NULL) return;
+   * the audio thread; v0.2 gets the same, in case it does too. */
+  DenoiseState* v01 = NULL;
+  NsRnnoise02* v02 = NULL;
+  if (!new_state(engine, &v01, &v02)) return;
   float silence[NS_FRAME];
   memset(silence, 0, sizeof(silence));
-  rnnoise_process_frame(scratch, silence, silence);
-  rnnoise_destroy(scratch);
+  run(engine, v01, v02, silence);
+  free_state(v01, v02);
 }
 
 NsSuppressor* ns_create(void) { return ns_create_engine(NS_ENGINE_RNNOISE); }
@@ -56,9 +99,8 @@ NsSuppressor* ns_create_engine(NsEngine engine) {
   atomic_init(&suppressor->level, 1.0f);
   atomic_init(&suppressor->voice_peak, -1.0f);
   suppressor->applied = 1.0f;
-  warm_up();
-  suppressor->state = rnnoise_create(NULL);
-  if (suppressor->state == NULL) {
+  warm_up(engine);
+  if (!new_state(engine, &suppressor->state, &suppressor->v02)) {
     free(suppressor);
     return NULL;
   }
@@ -71,7 +113,7 @@ NsEngine ns_suppressor_engine(const NsSuppressor* suppressor) {
 
 void ns_destroy(NsSuppressor* suppressor) {
   if (suppressor == NULL) return;
-  rnnoise_destroy(suppressor->state);
+  free_state(suppressor->state, suppressor->v02);
   free(suppressor);
 }
 
@@ -79,10 +121,12 @@ int ns_reset(NsSuppressor* suppressor) {
   if (suppressor == NULL) return 0;
   /* rnnoise_init on a live state re-allocates its GRU buffers and leaks the
    * old ones, so a fresh state replaces the old one. */
-  DenoiseState* state = rnnoise_create(NULL);
-  if (state == NULL) return 0;
-  rnnoise_destroy(suppressor->state);
+  DenoiseState* state = NULL;
+  NsRnnoise02* v02 = NULL;
+  if (!new_state(suppressor->engine, &state, &v02)) return 0;
+  free_state(suppressor->state, suppressor->v02);
   suppressor->state = state;
+  suppressor->v02 = v02;
   memset(suppressor->dry, 0, sizeof(suppressor->dry));
   return 1;
 }
@@ -132,7 +176,7 @@ NsResult ns_process(NsSuppressor* suppressor, int sample_rate_hz, int num_sample
   if (num_samples != NS_FRAME) return NS_UNSUPPORTED_FRAME;
   float input[NS_FRAME];
   memcpy(input, samples, sizeof(input));
-  float vad = rnnoise_process_frame(suppressor->state, samples, samples);
+  float vad = run(suppressor->engine, suppressor->state, suppressor->v02, samples);
   const float target = atomic_load_explicit(&suppressor->level, memory_order_relaxed);
   if (target < 1.0f || suppressor->applied < 1.0f) mix(suppressor, samples, input, target);
   memcpy(suppressor->dry, input, sizeof(input));

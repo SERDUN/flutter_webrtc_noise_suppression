@@ -197,6 +197,13 @@ int main(void) {
   ns_destroy(NULL);
 
   check_engine(NS_ENGINE_RNNOISE);
+#ifdef NS_WITH_RNNOISE02
+  check_engine(NS_ENGINE_RNNOISE_02);
+#else
+  CHECK(ns_engine_name(NS_ENGINE_RNNOISE_02) == NULL, "v0.2 not built: no name");
+  CHECK(ns_create_engine(NS_ENGINE_RNNOISE_02) == NULL, "v0.2 not built: not created");
+  printf("rnnoise 0.2: not in this build\n");
+#endif
   check_level();
   check_voice_probability();
 

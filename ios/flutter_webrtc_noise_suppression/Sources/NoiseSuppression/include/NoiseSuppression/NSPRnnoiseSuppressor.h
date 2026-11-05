@@ -8,6 +8,8 @@ NS_ASSUME_NONNULL_BEGIN
 typedef NS_ENUM(NSInteger, NSPRnnoiseModel) {
   /// RNNoise v0.1.1.
   NSPRnnoiseModelV01 NS_SWIFT_NAME(v0_1) = 0,
+  /// RNNoise v0.2 (2024) with its standard model.
+  NSPRnnoiseModelV02 NS_SWIFT_NAME(v0_2) = 1,
 };
 
 /// NSPNoiseSuppressor on RNNoise: 48 kHz mono, 480 samples per frame.
@@ -18,6 +20,9 @@ typedef NS_ENUM(NSInteger, NSPRnnoiseModel) {
 
 /// Returns nil when the engine state cannot be allocated.
 - (nullable instancetype)initWithModel:(NSPRnnoiseModel)model NS_DESIGNATED_INITIALIZER;
+
+/// Whether this build has `model`: RNNoise v0.2 only when the app built it in.
++ (BOOL)isAvailable:(NSPRnnoiseModel)model;
 
 /// The model this suppressor runs.
 @property(nonatomic, readonly) NSPRnnoiseModel model;

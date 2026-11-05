@@ -39,6 +39,10 @@ class RunnerTests: XCTestCase {
     denoisesWhiteNoise(.v0_1)
   }
 
+  func testRnnoise02SuppressorDenoisesWhiteNoise() {
+    denoisesWhiteNoise(.v0_2)
+  }
+
   // The format adapter, with engines that only copy: the same cases as Android's FormatAdapterTest.
 
   private final class Identity: NSObject, NSPNoiseSuppressor {

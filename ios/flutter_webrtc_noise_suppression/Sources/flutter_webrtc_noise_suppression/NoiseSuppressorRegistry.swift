@@ -18,8 +18,16 @@ final class NoiseSuppressorRegistry {
   /// The name of RNNoise v0.1.1, the default engine.
   static let rnnoise = "rnnoise"
 
+  /// The name of RNNoise v0.2 with its standard model, under evaluation beside v0.1.1.
+  static let rnnoise02 = "rnnoise-0.2"
+
   private static let lock = NSLock()
-  private static var factories: [String: Factory] = [rnnoise: { NSPRnnoiseSuppressor(model: .v0_1) }]
+  private static var factories: [String: Factory] = {
+    var all: [String: Factory] = [rnnoise: { NSPRnnoiseSuppressor(model: .v0_1) }]
+    // Only in a build that has it (FLUTTER_WEBRTC_NS_RNNOISE02=1 at build time).
+    if NSPRnnoiseSuppressor.isAvailable(.v0_2) { all[rnnoise02] = { NSPRnnoiseSuppressor(model: .v0_2) } }
+    return all
+  }()
 
   private init() {}
 

@@ -47,7 +47,16 @@ android {
         }
     }
 
+    // RNNoise v0.2 adds about 5 MB per ABI, so it is built only when the app asks for it, with
+    // `flutter_webrtc_noise_suppression.rnnoise02=true` in its android/gradle.properties.
+    def withRnnoise02 = (findProperty("flutter_webrtc_noise_suppression.rnnoise02") ?: "false").toString().toBoolean()
+
     defaultConfig {
+        externalNativeBuild {
+            cmake {
+                arguments "-DNS_WITH_RNNOISE02=${withRnnoise02 ? "ON" : "OFF"}"
+            }
+        }
         minSdk = 24
     }
 

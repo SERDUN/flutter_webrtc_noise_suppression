@@ -7,7 +7,9 @@ public final class RnnoiseSuppressor implements NoiseSuppressor {
   /** The RNNoise build and model a suppressor runs; the ids are the C core's NsEngine. */
   public enum Model {
     /** RNNoise v0.1.1. */
-    V0_1(0);
+    V0_1(0),
+    /** RNNoise v0.2 (2024) with its standard model. */
+    V0_2(1);
 
     final int id;
 
@@ -93,6 +95,11 @@ public final class RnnoiseSuppressor implements NoiseSuppressor {
   @Override
   public int engineFrameSize() {
     return nativeFrameSize();
+  }
+
+  /** Whether this build has [model]: RNNoise v0.2 only when the app built it in. */
+  public static boolean isAvailable(Model model) {
+    return nativeEngine(model.id) != null;
   }
 
   /** Samples per frame the engine accepts. */
