@@ -30,6 +30,10 @@ JNIEXPORT void JNICALL JNI_FN(nativeSetSuppressionLevel)(JNIEnv* env, jclass cls
   ns_set_suppression_level((NsSuppressor*)(intptr_t)handle, level);
 }
 
+JNIEXPORT jfloat JNICALL JNI_FN(nativeTakeVoiceProbability)(JNIEnv* env, jclass cls, jlong handle) {
+  return ns_take_voice_probability((NsSuppressor*)(intptr_t)handle);
+}
+
 JNIEXPORT jstring JNICALL JNI_FN(nativeEngine)(JNIEnv* env, jclass cls, jint engine) {
   const char* name = ns_engine_name((NsEngine)engine);
   return name == NULL ? NULL : (*env)->NewStringUTF(env, name);
