@@ -16,6 +16,10 @@
   return ns_frame_size();
 }
 
++ (BOOL)isAvailable:(NSPRnnoiseModel)model {
+  return ns_engine_name((NsEngine)model) != NULL;
+}
+
 - (nullable instancetype)init {
   return [self initWithModel:NSPRnnoiseModelV01];
 }

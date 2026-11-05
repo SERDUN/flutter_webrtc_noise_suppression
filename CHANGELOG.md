@@ -1,5 +1,6 @@
 ## Unreleased
 
+* RNNoise v0.2 with its standard model as a second engine, `WebrtcNoiseSuppressionEngine.rnnoise02` (`rnnoise-0.2`), for evaluation; v0.1.1 stays the default. Built only when the app asks for it (Android: Gradle property `flutter_webrtc_noise_suppression.rnnoise02=true`; iOS: `FLUTTER_WEBRTC_NS_RNNOISE02=1` at build time); then about 5.3 MB more per ABI.
 * `vadStream`: the voice probability of the microphone, the highest of each 100 ms, through the event channel `com.portaone.flutter_webrtc_noise_suppression/vad`; the capture thread only raises an atomic value.
 * `attach(suppressionLevel:)` and `setSuppressionLevel`: a dry/wet mix from 0.0 to 1.0, aligned with the engine's delay and ramped over one frame.
 * `measure(engine:)` times an engine on the device: 3 s of white noise, mean and p99 per frame, attenuation.
