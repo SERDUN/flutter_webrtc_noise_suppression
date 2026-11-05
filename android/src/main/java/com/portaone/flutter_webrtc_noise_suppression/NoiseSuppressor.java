@@ -48,6 +48,13 @@ public interface NoiseSuppressor {
   void release();
 
   /**
+   * How much of the denoised signal the output carries: 1 is all of it (the default), 0 the input
+   * as it came. Any thread may call this while {@link #process} runs. An engine without a level
+   * keeps the default and ignores this.
+   */
+  default void setSuppressionLevel(float level) {}
+
+  /**
    * The rate the engine works at, Hz, or 0 when it takes the stream's own rate (the default). The
    * add-on reaches a rate the stream's divides by a whole number by resampling.
    */

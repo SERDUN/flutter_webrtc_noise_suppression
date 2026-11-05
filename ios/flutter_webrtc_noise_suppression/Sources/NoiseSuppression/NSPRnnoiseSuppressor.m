@@ -58,6 +58,10 @@
                                               NULL);
 }
 
+- (void)setSuppressionLevel:(float)level {
+  ns_set_suppression_level(_suppressor, level);
+}
+
 - (void)releaseEngine {
   ns_destroy(_suppressor);
   _suppressor = NULL;
