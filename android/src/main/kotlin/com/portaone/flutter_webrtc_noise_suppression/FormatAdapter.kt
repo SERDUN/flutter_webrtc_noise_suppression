@@ -51,6 +51,8 @@ internal class FormatAdapter(
 
     override fun engine(): String = inner.engine()
 
+    override fun setSuppressionLevel(level: Float) = inner.setSuppressionLevel(level)
+
     override fun engineSampleRateHz(): Int = 0
 
     override fun engineFrameSize(): Int = 0

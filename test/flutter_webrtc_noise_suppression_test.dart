@@ -32,6 +32,7 @@ void main() {
     expect(calls.map((c) => c.method), ['attach', 'detach']);
     expect(calls.first.arguments, {
       'engines': ['rnnoise'],
+      'suppressionLevel': 1.0,
     });
   });
 
@@ -44,6 +45,7 @@ void main() {
     );
     expect(calls.single.arguments, {
       'engines': ['rnnoise', 'test-identity-16k'],
+      'suppressionLevel': 1.0,
       'dumpInputSeconds': 30,
     });
   });
@@ -54,6 +56,26 @@ void main() {
 
     await bridge.registerTestEngines();
     expect(calls.single.method, 'registerTestEngines');
+  });
+
+  test('the suppression level reaches the native side', () async {
+    answer = null;
+    const bridge = WebrtcNoiseSuppressionBridge();
+
+    await bridge.attach(suppressionLevel: 0.25);
+    await bridge.setSuppressionLevel(0.75);
+    expect(calls.first.arguments, containsPair('suppressionLevel', 0.25));
+    expect(calls.last.method, 'setSuppressionLevel');
+    expect(calls.last.arguments, {'level': 0.75});
+  });
+
+  test('a level outside 0..1 is refused before the native side', () async {
+    const bridge = WebrtcNoiseSuppressionBridge();
+
+    expect(() => bridge.setSuppressionLevel(1.5), throwsRangeError);
+    expect(() => bridge.setSuppressionLevel(double.nan), throwsRangeError);
+    expect(() => bridge.attach(suppressionLevel: -0.1), throwsRangeError);
+    expect(calls, isEmpty);
   });
 
   test('measure names the engine and reads the native answer', () async {

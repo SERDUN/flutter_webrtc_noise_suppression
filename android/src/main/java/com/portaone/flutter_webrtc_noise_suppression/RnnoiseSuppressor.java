@@ -66,6 +66,11 @@ public final class RnnoiseSuppressor implements NoiseSuppressor {
   }
 
   @Override
+  public void setSuppressionLevel(float level) {
+    if (handle != 0) nativeSetSuppressionLevel(handle, level);
+  }
+
+  @Override
   public void release() {
     if (handle != 0) {
       nativeDestroy(handle);
@@ -101,6 +106,8 @@ public final class RnnoiseSuppressor implements NoiseSuppressor {
 
   private static native int nativeProcess(
       long handle, int sampleRateHz, int numSamples, ByteBuffer frame, int byteOffset);
+
+  private static native void nativeSetSuppressionLevel(long handle, float level);
 
   private static native String nativeEngine(int engine);
 

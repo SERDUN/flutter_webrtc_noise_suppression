@@ -25,6 +25,11 @@ JNIEXPORT jint JNICALL JNI_FN(nativeProcess)(JNIEnv* env, jclass cls, jlong hand
                           (float*)(base + byte_offset), NULL);
 }
 
+JNIEXPORT void JNICALL JNI_FN(nativeSetSuppressionLevel)(JNIEnv* env, jclass cls, jlong handle,
+                                                         jfloat level) {
+  ns_set_suppression_level((NsSuppressor*)(intptr_t)handle, level);
+}
+
 JNIEXPORT jstring JNICALL JNI_FN(nativeEngine)(JNIEnv* env, jclass cls, jint engine) {
   const char* name = ns_engine_name((NsEngine)engine);
   return name == NULL ? NULL : (*env)->NewStringUTF(env, name);

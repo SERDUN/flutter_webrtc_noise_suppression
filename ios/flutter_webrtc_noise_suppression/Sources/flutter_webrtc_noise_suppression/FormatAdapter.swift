@@ -247,6 +247,10 @@ final class FormatAdapter: NSObject, NSPNoiseSuppressor {
     inner.releaseEngine()
   }
 
+  func setSuppressionLevel(_ level: Float) {
+    inner.setSuppressionLevel?(level)
+  }
+
   /// A windowed-sinc low-pass (Blackman) for decimating and interpolating by `factor`: cut at 0.9 of
   /// the lower rate's Nyquist, 24 taps per factor, unit gain at DC.
   static func lowPass(_ factor: Int) -> [Float] {
