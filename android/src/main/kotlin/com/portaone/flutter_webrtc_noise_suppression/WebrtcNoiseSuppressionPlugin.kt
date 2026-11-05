@@ -8,6 +8,7 @@ import com.cloudwebrtc.webrtc.audio.AudioProcessingAdapter
 import com.cloudwebrtc.webrtc.audio.AudioProcessingController
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.nio.ByteBuffer
@@ -39,6 +40,8 @@ class WebrtcNoiseSuppressionPlugin :
     FlutterPlugin,
     MethodChannel.MethodCallHandler {
     private var channel: MethodChannel? = null
+    private var vadChannel: EventChannel? = null
+    private var vadSink: EventChannel.EventSink? = null
     private var engine: FlutterEngine? = null
     private var filesDir: java.io.File? = null
     private var controller: AudioProcessingController? = null
@@ -57,7 +60,42 @@ class WebrtcNoiseSuppressionPlugin :
             MethodChannel(binding.binaryMessenger, CHANNEL).also {
                 it.setMethodCallHandler(this)
             }
+        vadChannel =
+            EventChannel(binding.binaryMessenger, "$CHANNEL/vad").also {
+                it.setStreamHandler(
+                    object : EventChannel.StreamHandler {
+                        override fun onListen(
+                            arguments: Any?,
+                            events: EventChannel.EventSink,
+                        ) {
+                            vadSink = events
+                            main.removeCallbacks(vadTick)
+                            main.postDelayed(vadTick, VAD_INTERVAL_MS)
+                        }
+
+                        override fun onCancel(arguments: Any?) {
+                            vadSink = null
+                            main.removeCallbacks(vadTick)
+                        }
+                    },
+                )
+            }
     }
+
+    /**
+     * Every [VAD_INTERVAL_MS] on the main thread while Dart listens: the chain's highest voice
+     * probability since the last tick, one event, none when no engine of the chain detects voice
+     * or no frame came. The audio thread only raises an atomic value; nothing here waits for it.
+     */
+    private val vadTick =
+        object : Runnable {
+            override fun run() {
+                val sink = vadSink ?: return
+                val peak = processor?.takeVoiceProbability() ?: Float.NaN
+                if (!peak.isNaN()) sink.success(peak.toDouble())
+                main.postDelayed(this, VAD_INTERVAL_MS)
+            }
+        }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         detach()
@@ -65,6 +103,10 @@ class WebrtcNoiseSuppressionPlugin :
         worker = null
         channel?.setMethodCallHandler(null)
         channel = null
+        main.removeCallbacks(vadTick)
+        vadChannel?.setStreamHandler(null)
+        vadChannel = null
+        vadSink = null
         engine = null
     }
 
@@ -292,6 +334,7 @@ class WebrtcNoiseSuppressionPlugin :
         const val TAG = "WebrtcNoiseSuppression"
         const val CHANNEL = "com.portaone.flutter_webrtc_noise_suppression"
         const val SLOT_RATE = 48_000
+        const val VAD_INTERVAL_MS = 100L
 
         /** The chain a call names: `engines`, or the older single `engine`, or RNNoise v0.1.1. */
         fun engineNames(call: MethodCall): List<String> =
@@ -441,6 +484,16 @@ private class ChainProcessor(
     fun release() = stages.forEach { it.release() }
 
     fun setSuppressionLevel(level: Float) = stages.forEach { it.suppressor.setSuppressionLevel(level) }
+
+    /** The highest voice probability any engine of the chain saw since the last call; NaN for none. */
+    fun takeVoiceProbability(): Float {
+        var peak = Float.NaN
+        for (stage in stages) {
+            val p = stage.suppressor.takeVoiceProbability()
+            if (!p.isNaN() && (peak.isNaN() || p > peak)) peak = p
+        }
+        return peak
+    }
 
     /** The dumped slot input as a 16-bit mono WAV in [dir]; null when nothing was dumped. */
     fun writeDump(dir: java.io.File?): java.io.File? {

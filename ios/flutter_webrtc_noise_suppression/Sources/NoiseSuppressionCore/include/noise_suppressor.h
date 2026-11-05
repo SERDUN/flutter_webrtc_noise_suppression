@@ -87,6 +87,14 @@ void ns_set_suppression_level(NsSuppressor* suppressor, float level);
 float ns_suppression_level(const NsSuppressor* suppressor);
 
 /*
+ * The highest voice probability (0..1) of the frames ns_process denoised since
+ * the last call, and starts the next interval; -1 when no frame was denoised
+ * in between, or for NULL. Any thread may call it while ns_process runs: the
+ * audio thread only raises one atomic value, without a lock.
+ */
+float ns_take_voice_probability(NsSuppressor* suppressor);
+
+/*
  * Denoises one frame in place. sample_rate_hz and num_samples describe the
  * frame; anything but 48000 / 480 leaves it unchanged. On NS_PROCESSED and
  * when voice_probability is not NULL, it receives the engine's estimate that

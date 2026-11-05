@@ -1,5 +1,6 @@
 ## Unreleased
 
+* `vadStream`: the voice probability of the microphone, the highest of each 100 ms, through the event channel `com.portaone.flutter_webrtc_noise_suppression/vad`; the capture thread only raises an atomic value.
 * `attach(suppressionLevel:)` and `setSuppressionLevel`: a dry/wet mix from 0.0 to 1.0, aligned with the engine's delay and ramped over one frame.
 * `measure(engine:)` times an engine on the device: 3 s of white noise, mean and p99 per frame, attenuation.
 * The detach line carries the call's time per frame: mean, p99, max and the frames over 10 ms.

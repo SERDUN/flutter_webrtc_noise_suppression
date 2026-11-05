@@ -69,6 +69,25 @@ void main() {
     expect(calls.last.arguments, {'level': 0.75});
   });
 
+  test('vadStream reads the native events as doubles', () async {
+    const vad = EventChannel(WebrtcNoiseSuppressionBridge.vadChannelName);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockStreamHandler(
+      vad,
+      MockStreamHandler.inline(
+        onListen: (arguments, events) {
+          events.success(0.25);
+          events.success(1);
+          events.endOfStream();
+        },
+      ),
+    );
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockStreamHandler(vad, null),
+    );
+
+    expect(await const WebrtcNoiseSuppressionBridge().vadStream.toList(), [0.25, 1.0]);
+  });
+
   test('a level outside 0..1 is refused before the native side', () async {
     const bridge = WebrtcNoiseSuppressionBridge();
 

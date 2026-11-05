@@ -47,6 +47,7 @@ class RunnerTests: XCTestCase {
     var lengths = Set<Int>()
     var level: Float = 1
     func setSuppressionLevel(_ level: Float) { self.level = level }
+    func takeVoiceProbability() -> Float { 0.75 }
     init(_ rate: Int, _ frame: Int) {
       self.rate = rate
       self.frame = frame
@@ -207,6 +208,13 @@ class RunnerTests: XCTestCase {
     let engine = Identity(16_000, 160)
     FormatAdapter(engine).setSuppressionLevel(0.25)
     XCTAssertEqual(engine.level, 0.25)
+  }
+
+  func testTheVoiceProbabilityComesThroughTheAdapter() {
+    XCTAssertEqual(FormatAdapter(Identity(16_000, 160)).takeVoiceProbability(), 0.75)
+    let rnnoise = NSPRnnoiseSuppressor(model: .v0_1)!
+    XCTAssertTrue(rnnoise.takeVoiceProbability().isNaN, "no frame yet")
+    rnnoise.releaseEngine()
   }
 
   func testTheRegistryNamesRnnoiseAndTakesAnotherEngine() {
