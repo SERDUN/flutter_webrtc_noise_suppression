@@ -17,6 +17,7 @@ struct NsSuppressor {
   float dry[NS_FRAME];
   _Atomic float level;
   float applied; /* the level the last frame ended on; audio thread only */
+  _Atomic float voice_peak; /* the highest voice probability since the last take; -1 for none */
 };
 
 int ns_sample_rate(void) { return NS_RATE; }
@@ -53,6 +54,7 @@ NsSuppressor* ns_create_engine(NsEngine engine) {
   if (suppressor == NULL) return NULL;
   suppressor->engine = engine;
   atomic_init(&suppressor->level, 1.0f);
+  atomic_init(&suppressor->voice_peak, -1.0f);
   suppressor->applied = 1.0f;
   warm_up();
   suppressor->state = rnnoise_create(NULL);
@@ -97,6 +99,20 @@ float ns_suppression_level(const NsSuppressor* suppressor) {
   return atomic_load_explicit(&((NsSuppressor*)suppressor)->level, memory_order_relaxed);
 }
 
+float ns_take_voice_probability(NsSuppressor* suppressor) {
+  if (suppressor == NULL) return -1.0f;
+  return atomic_exchange_explicit(&suppressor->voice_peak, -1.0f, memory_order_relaxed);
+}
+
+/* Raises the interval's peak to `vad`; a taker that reset it in between only costs a retry. */
+static void raise_voice_peak(NsSuppressor* suppressor, float vad) {
+  float seen = atomic_load_explicit(&suppressor->voice_peak, memory_order_relaxed);
+  while (vad > seen &&
+         !atomic_compare_exchange_weak_explicit(&suppressor->voice_peak, &seen, vad,
+                                                memory_order_relaxed, memory_order_relaxed)) {
+  }
+}
+
 /* Mixes the denoised `wet` with the frame before `input`, ramping from the last
  * frame's level to `target`, and keeps `input` for the next frame. */
 static void mix(NsSuppressor* suppressor, float* wet, const float* input, float target) {
@@ -120,6 +136,7 @@ NsResult ns_process(NsSuppressor* suppressor, int sample_rate_hz, int num_sample
   const float target = atomic_load_explicit(&suppressor->level, memory_order_relaxed);
   if (target < 1.0f || suppressor->applied < 1.0f) mix(suppressor, samples, input, target);
   memcpy(suppressor->dry, input, sizeof(input));
+  raise_voice_peak(suppressor, vad);
   if (voice_probability != NULL) *voice_probability = vad;
   return NS_PROCESSED;
 }

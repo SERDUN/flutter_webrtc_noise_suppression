@@ -23,6 +23,8 @@ class FormatAdapterTest {
             this.level = level
         }
 
+        override fun takeVoiceProbability() = 0.75f
+
         override fun engine() = "identity $rate/$frame"
 
         override fun initialize(sampleRateHz: Int): Boolean {
@@ -245,6 +247,25 @@ class FormatAdapterTest {
         val engine = Identity(16_000, 160)
         FormatAdapter(engine).setSuppressionLevel(0.25f)
         assertEquals(0.25f, engine.level, 0f)
+    }
+
+    @Test
+    fun theVoiceProbabilityComesThroughTheAdapterAndIsNaNWithoutOne() {
+        assertEquals(0.75f, FormatAdapter(Identity(16_000, 160)).takeVoiceProbability(), 0f)
+        val plain =
+            object : NoiseSuppressor {
+                override fun engine() = "plain"
+
+                override fun initialize(sampleRateHz: Int) = true
+
+                override fun process(
+                    frame: ByteBuffer,
+                    numSamples: Int,
+                ) = NoiseSuppressor.Result.PROCESSED
+
+                override fun release() {}
+            }
+        assertTrue(FormatAdapter(plain).takeVoiceProbability().isNaN())
     }
 
     @Test
