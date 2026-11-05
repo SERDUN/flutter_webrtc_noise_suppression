@@ -17,6 +17,11 @@ class FormatAdapterTest {
     ) : NoiseSuppressor {
         var lengths = mutableSetOf<Int>()
         var initializedAt = 0
+        var level = 1f
+
+        override fun setSuppressionLevel(level: Float) {
+            this.level = level
+        }
 
         override fun engine() = "identity $rate/$frame"
 
@@ -233,6 +238,13 @@ class FormatAdapterTest {
         assertTrue(adapter.initialize(slot))
         val (_, results) = run(adapter, 1, sine(1000.0))
         assertTrue(results.all { it == NoiseSuppressor.Result.INVALID })
+    }
+
+    @Test
+    fun theLevelReachesTheEngineThroughTheAdapter() {
+        val engine = Identity(16_000, 160)
+        FormatAdapter(engine).setSuppressionLevel(0.25f)
+        assertEquals(0.25f, engine.level, 0f)
     }
 
     @Test

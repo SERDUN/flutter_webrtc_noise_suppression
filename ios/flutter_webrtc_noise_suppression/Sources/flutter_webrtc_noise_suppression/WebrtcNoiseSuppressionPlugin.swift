@@ -29,6 +29,7 @@ public final class WebrtcNoiseSuppressionPlugin: NSObject, FlutterPlugin {
   private static let slotRate = 48_000
   private static var processor: ChainProcessor?
   private static var generation = 0
+  private static var suppressionLevel: Float = 1
   // Two lines a call, at the default level: the device log keeps and streams it for any subsystem,
   // while an info line of a subsystem it has no configuration for may never reach a reader.
 
@@ -47,10 +48,14 @@ public final class WebrtcNoiseSuppressionPlugin: NSObject, FlutterPlugin {
       } else if let unknown = names.first(where: { NoiseSuppressorRegistry.factory($0) == nil }) {
         result(FlutterError(code: "unknown_engine", message: "unknown engine \(unknown)", details: nil))
       } else {
+        Self.setSuppressionLevel(arguments?["suppressionLevel"] as? Double ?? 1)
         Self.attach(names, result: result)
       }
     case "detach":
       result(Self.detach())
+    case "setSuppressionLevel":
+      Self.setSuppressionLevel(arguments?["level"] as? Double ?? 1)
+      result(nil)
     case "registerTestEngines":
       TestEngines.register()
       result(nil)
@@ -74,6 +79,12 @@ public final class WebrtcNoiseSuppressionPlugin: NSObject, FlutterPlugin {
   private static func engineNames(_ arguments: [String: Any]?) -> [String] {
     if let names = arguments?["engines"] as? [String] { return names }
     return [arguments?["engine"] as? String ?? NoiseSuppressorRegistry.rnnoise]
+  }
+
+  /// The level of the chain in the slot, and of the next one. The engines take it atomically.
+  private static func setSuppressionLevel(_ level: Double) {
+    suppressionLevel = Float(level)
+    processor?.setSuppressionLevel(suppressionLevel)
   }
 
   /// Puts a chain of the engines `names`, in that order, into the slot, and answers true when it is
@@ -105,6 +116,7 @@ public final class WebrtcNoiseSuppressionPlugin: NSObject, FlutterPlugin {
         }
         if processor != nil { _ = remove() }
         let created = ChainProcessor(names: names, stages: stages)
+        created.setSuppressionLevel(suppressionLevel)
         AudioManager.sharedInstance().capturePostProcessingAdapter.addProcessing(created)
         processor = created
         let engines = stages.map { $0.suppressor.engine }.joined(separator: " > ")
@@ -295,6 +307,10 @@ private final class ChainProcessor: NSObject, ExternalAudioProcessingDelegate {
   /// the processor left the slot, so no frame is counted at the same time.
   func summary() -> [String] {
     stages.map { $0.summary(announced) }
+  }
+
+  func setSuppressionLevel(_ level: Float) {
+    stages.forEach { $0.suppressor.setSuppressionLevel?(level) }
   }
 
   func releaseEngines() {

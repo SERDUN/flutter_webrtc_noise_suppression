@@ -44,6 +44,7 @@ class WebrtcNoiseSuppressionPlugin :
     private var controller: AudioProcessingController? = null
     private var processor: ChainProcessor? = null
     private var generation = 0
+    private var suppressionLevel = 1f
     private var worker: ExecutorService? = null
     private val main = Handler(Looper.getMainLooper())
 
@@ -78,10 +79,17 @@ class WebrtcNoiseSuppressionPlugin :
                 when {
                     names.isEmpty() -> result.error("no_engine", "attach names no engine", null)
                     unknown != null -> result.error("unknown_engine", "unknown engine $unknown", null)
-                    else -> attach(names, call.argument<Int>("dumpInputSeconds") ?: 0, result)
+                    else -> {
+                        setSuppressionLevel(call.argument<Double>("suppressionLevel") ?: 1.0)
+                        attach(names, call.argument<Int>("dumpInputSeconds") ?: 0, result)
+                    }
                 }
             }
             "detach" -> result.success(detach())
+            "setSuppressionLevel" -> {
+                setSuppressionLevel(call.argument<Double>("level") ?: 1.0)
+                result.success(null)
+            }
             "registerTestEngines" -> {
                 TestEngines.register()
                 result.success(null)
@@ -113,6 +121,12 @@ class WebrtcNoiseSuppressionPlugin :
             }
             else -> result.notImplemented()
         }
+    }
+
+    /** The level of the chain in the slot, and of the next one. The engines take it atomically. */
+    private fun setSuppressionLevel(level: Double) {
+        suppressionLevel = level.toFloat()
+        processor?.setSuppressionLevel(suppressionLevel)
     }
 
     /**
@@ -197,6 +211,7 @@ class WebrtcNoiseSuppressionPlugin :
         // given seconds and written on detach. The buffer is allocated here, not per frame.
         val dump = if (dumpInputSeconds > 0) ShortArray(dumpInputSeconds * 48_000) else null
         val created = ChainProcessor(names, stages, dump)
+        created.setSuppressionLevel(suppressionLevel)
         found.capturePostProcessing.addProcessor(created)
         controller = found
         processor = created
@@ -424,6 +439,8 @@ private class ChainProcessor(
     }
 
     fun release() = stages.forEach { it.release() }
+
+    fun setSuppressionLevel(level: Float) = stages.forEach { it.suppressor.setSuppressionLevel(level) }
 
     /** The dumped slot input as a 16-bit mono WAV in [dir]; null when nothing was dumped. */
     fun writeDump(dir: java.io.File?): java.io.File? {

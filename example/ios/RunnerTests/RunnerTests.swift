@@ -45,6 +45,8 @@ class RunnerTests: XCTestCase {
     let rate: Int
     let frame: Int
     var lengths = Set<Int>()
+    var level: Float = 1
+    func setSuppressionLevel(_ level: Float) { self.level = level }
     init(_ rate: Int, _ frame: Int) {
       self.rate = rate
       self.frame = frame
@@ -199,6 +201,12 @@ class RunnerTests: XCTestCase {
     let result = frame.withUnsafeMutableBufferPointer { adapter.processSamples($0.baseAddress!, count: 480) }
     XCTAssertEqual(result, .unsupportedRate)
     XCTAssertEqual(frame, (0..<480).map { sine(1000)($0) })
+  }
+
+  func testTheLevelReachesTheEngineThroughTheAdapter() {
+    let engine = Identity(16_000, 160)
+    FormatAdapter(engine).setSuppressionLevel(0.25)
+    XCTAssertEqual(engine.level, 0.25)
   }
 
   func testTheRegistryNamesRnnoiseAndTakesAnotherEngine() {

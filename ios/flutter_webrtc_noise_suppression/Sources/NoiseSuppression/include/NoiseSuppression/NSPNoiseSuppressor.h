@@ -40,6 +40,11 @@ typedef NS_ENUM(NSInteger, NSPNoiseSuppressorResult) {
 
 @optional
 
+/// How much of the denoised signal the output carries: 1 is all of it (the default), 0 the input as
+/// it came. Any thread may call this while -processSamples:count: runs. An engine without a level
+/// does not implement it.
+- (void)setSuppressionLevel:(float)level;
+
 /// The rate the engine works at, Hz, or 0 (or not implemented) when it takes the stream's own rate.
 /// The add-on reaches a rate the stream's divides by a whole number by resampling.
 @property(nonatomic, readonly) NSInteger engineSampleRate;
