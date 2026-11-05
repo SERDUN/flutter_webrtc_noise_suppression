@@ -1,5 +1,14 @@
 # flutter_webrtc_noise_suppression
 
+> **This repository has moved and is archived.** The plugin now lives in [portaone/porta-flutter-plugins](https://github.com/portaone/porta-flutter-plugins), in [`packages/flutter_webrtc_noise_suppression`](https://github.com/portaone/porta-flutter-plugins/tree/main/packages/flutter_webrtc_noise_suppression), with its history, and is published to pub.dev as [`flutter_webrtc_noise_suppression`](https://pub.dev/packages/flutter_webrtc_noise_suppression). Open issues and pull requests there. To move an app over:
+>
+> ```yaml
+> dependencies:
+>   flutter_webrtc_noise_suppression: ^0.1.0
+> ```
+>
+> or, from git: `url: https://github.com/portaone/porta-flutter-plugins.git`, `path: packages/flutter_webrtc_noise_suppression`. The commits of this repository were rewritten before the move, so a `ref:` pinned to a commit of it may no longer resolve.
+
 A [flutter_webrtc](https://github.com/flutter-webrtc/flutter-webrtc) add-on: noise suppression of the voice an app sends. RNNoise runs in flutter_webrtc's capture post-processing slot, after the platform's echo cancellation and noise suppression and right before the encoder, with a suppression level and a voice activity stream. RNNoise v0.1.1 by default, v0.2 when the app builds it in. Android and iOS. Experimental. The plugin is built so that another engine joins it as a pull request: see [Adding an engine](docs/adding-an-engine.md).
 
 ## Architecture
