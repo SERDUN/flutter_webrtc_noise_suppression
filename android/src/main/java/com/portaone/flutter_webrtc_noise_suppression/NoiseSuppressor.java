@@ -55,6 +55,16 @@ public interface NoiseSuppressor {
   default void setSuppressionLevel(float level) {}
 
   /**
+   * The highest probability (0..1) that a frame held voice, over the frames processed since the
+   * last call, and starts the next interval; NaN when no frame was processed in between or the
+   * engine has no voice detection (the default). Any thread may call this while {@link #process}
+   * runs; it must not block the audio thread.
+   */
+  default float takeVoiceProbability() {
+    return Float.NaN;
+  }
+
+  /**
    * The rate the engine works at, Hz, or 0 when it takes the stream's own rate (the default). The
    * add-on reaches a rate the stream's divides by a whole number by resampling.
    */

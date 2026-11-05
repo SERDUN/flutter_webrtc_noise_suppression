@@ -27,7 +27,7 @@ public final class WebrtcNoiseSuppressionPlugin: NSObject, FlutterPlugin {
   private static let log = OSLog(subsystem: "com.portaone.flutter_webrtc_noise_suppression", category: "WebrtcNoiseSuppression")
   private static let worker = DispatchQueue(label: "com.portaone.flutter_webrtc_noise_suppression.create", qos: .userInitiated)
   private static let slotRate = 48_000
-  private static var processor: ChainProcessor?
+  fileprivate static var processor: ChainProcessor?
   private static var generation = 0
   private static var suppressionLevel: Float = 1
   // Two lines a call, at the default level: the device log keeps and streams it for any subsystem,
@@ -36,6 +36,8 @@ public final class WebrtcNoiseSuppressionPlugin: NSObject, FlutterPlugin {
   public static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(name: channelName, binaryMessenger: registrar.messenger())
     registrar.addMethodCallDelegate(WebrtcNoiseSuppressionPlugin(), channel: channel)
+    FlutterEventChannel(name: "\(channelName)/vad", binaryMessenger: registrar.messenger())
+      .setStreamHandler(VoiceActivityStream.shared)
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
@@ -313,11 +315,48 @@ private final class ChainProcessor: NSObject, ExternalAudioProcessingDelegate {
     stages.forEach { $0.suppressor.setSuppressionLevel?(level) }
   }
 
+  /// The highest voice probability any engine of the chain saw since the last call; NaN for none.
+  func takeVoiceProbability() -> Float {
+    var peak = Float.nan
+    for stage in stages {
+      let p = stage.suppressor.takeVoiceProbability?() ?? .nan
+      if !p.isNaN && (peak.isNaN || p > peak) { peak = p }
+    }
+    return peak
+  }
+
   func releaseEngines() {
     stages.forEach { $0.suppressor.releaseEngine() }
   }
 
   private func note(_ event: String) {
     if announced.count < 400 { announced += "[\(event)]" }
+  }
+}
+
+/// The voice probability of the chain in the slot, to Dart while it listens: every 100 ms on the main
+/// queue, the highest probability since the last tick, one event; none when no engine of the chain
+/// detects voice or no frame came. The audio thread only raises an atomic value in the C core.
+private final class VoiceActivityStream: NSObject, FlutterStreamHandler {
+  static let shared = VoiceActivityStream()
+  private var sink: FlutterEventSink?
+  private var timer: Timer?
+
+  func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+    sink = events
+    timer?.invalidate()
+    timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+      guard let self = self, let sink = self.sink else { return }
+      let peak = WebrtcNoiseSuppressionPlugin.processor?.takeVoiceProbability() ?? .nan
+      if !peak.isNaN { sink(Double(peak)) }
+    }
+    return nil
+  }
+
+  func onCancel(withArguments arguments: Any?) -> FlutterError? {
+    timer?.invalidate()
+    timer = nil
+    sink = nil
+    return nil
   }
 }

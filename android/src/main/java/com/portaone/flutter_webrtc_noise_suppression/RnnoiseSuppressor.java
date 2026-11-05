@@ -71,6 +71,13 @@ public final class RnnoiseSuppressor implements NoiseSuppressor {
   }
 
   @Override
+  public float takeVoiceProbability() {
+    if (handle == 0) return Float.NaN;
+    float peak = nativeTakeVoiceProbability(handle);
+    return peak < 0 ? Float.NaN : peak;
+  }
+
+  @Override
   public void release() {
     if (handle != 0) {
       nativeDestroy(handle);
@@ -108,6 +115,8 @@ public final class RnnoiseSuppressor implements NoiseSuppressor {
       long handle, int sampleRateHz, int numSamples, ByteBuffer frame, int byteOffset);
 
   private static native void nativeSetSuppressionLevel(long handle, float level);
+
+  private static native float nativeTakeVoiceProbability(long handle);
 
   private static native String nativeEngine(int engine);
 

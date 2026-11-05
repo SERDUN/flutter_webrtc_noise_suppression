@@ -44,6 +44,17 @@ class WebrtcNoiseSuppressionBridge {
   /// The channel the native side answers on.
   static const channelName = 'com.portaone.flutter_webrtc_noise_suppression';
 
+  /// The channel of [vadStream].
+  static const vadChannelName = '$channelName/vad';
+
+  static const _vadChannel = EventChannel(vadChannelName);
+
+  /// The probability (0.0..1.0) that the microphone held voice: the highest of its 10 ms frames over
+  /// each 100 ms, while a chain is in the slot and one of its engines detects voice (RNNoise does).
+  /// Nothing comes while no chain is attached or no audio flows. A broadcast stream; the native side
+  /// counts only while someone listens.
+  Stream<double> get vadStream => _vadChannel.receiveBroadcastStream().map((value) => (value as num).toDouble());
+
   final MethodChannel _channel;
 
   /// Whether the native side exists on this platform: Android and iOS only.

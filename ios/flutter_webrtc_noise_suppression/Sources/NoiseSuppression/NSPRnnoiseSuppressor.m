@@ -62,6 +62,11 @@
   ns_set_suppression_level(_suppressor, level);
 }
 
+- (float)takeVoiceProbability {
+  float peak = ns_take_voice_probability(_suppressor);
+  return peak < 0 ? NAN : peak;
+}
+
 - (void)releaseEngine {
   ns_destroy(_suppressor);
   _suppressor = NULL;

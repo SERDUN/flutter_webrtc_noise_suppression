@@ -166,6 +166,26 @@ static void check_level(void) {
   free(in); free(wet); free(dry); free(half);
 }
 
+static void check_voice_probability(void) {
+  NsSuppressor* s = ns_create();
+  CHECK(ns_take_voice_probability(s) == -1.0f, "no frame yet: -1");
+  float frame[480], vad, peak = 0;
+  seed = 4242;
+  for (int f = 0; f < 10; f++) {
+    for (int i = 0; i < 480; i++) frame[i] = noise_sample(3000.0f);
+    ns_process(s, 48000, 480, frame, &vad);
+    if (vad > peak) peak = vad;
+  }
+  float taken = ns_take_voice_probability(s);
+  CHECK(taken == peak, "the take is the highest of the frames");
+  CHECK(taken >= 0.0f && taken <= 1.0f, "the take is a probability");
+  CHECK(ns_take_voice_probability(s) == -1.0f, "a take starts the next interval");
+  ns_process(s, 16000, 480, frame, NULL);
+  CHECK(ns_take_voice_probability(s) == -1.0f, "a refused frame leaves no probability");
+  CHECK(ns_take_voice_probability(NULL) == -1.0f, "NULL takes -1");
+  ns_destroy(s);
+}
+
 int main(void) {
   CHECK(ns_sample_rate() == 48000, "sample rate is 48000");
   CHECK(ns_frame_size() == 480, "frame size is 480");
@@ -178,6 +198,7 @@ int main(void) {
 
   check_engine(NS_ENGINE_RNNOISE);
   check_level();
+  check_voice_probability();
 
   if (failures) {
     fprintf(stderr, "%d failure(s)\n", failures);

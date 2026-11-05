@@ -53,6 +53,8 @@ internal class FormatAdapter(
 
     override fun setSuppressionLevel(level: Float) = inner.setSuppressionLevel(level)
 
+    override fun takeVoiceProbability(): Float = inner.takeVoiceProbability()
+
     override fun engineSampleRateHz(): Int = 0
 
     override fun engineFrameSize(): Int = 0
