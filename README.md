@@ -38,7 +38,7 @@ Which rates the slot can see, with the codecs of the built-in factory both platf
 
 iLBC, iSAC and G.729 are not in this build; a far end that insists on one gets a transcoding stand or no call. The microphone's own rate counts too (the lower of the two wins): a Bluetooth headset records at 8 or 16 kHz, so 16 kHz again; with `bypassVoiceProcessing` Android records at the phone's native rate, usually 48 or 44.1 kHz, so 48 kHz. 32 kHz, which the module also runs at, would need a microphone recording at 32 kHz; 48 kHz is not a whole multiple of it, so RNNoise would leave such a call unchanged. No phone seen here does that. G.711 and G.722 were measured on Android only; a Bluetooth call is not measured.
 
-The engine hears the voice after echo cancellation, the platform's noise suppression and gain control, and is the last thing that changes it before the encoder. That is the place an extra denoiser does not hurt echo cancellation; a hook before the processing module (raw microphone samples, as `rtc_rnnoise` on pub.dev takes them) would feed the echo canceller a signal it no longer recognizes.
+The engine hears the voice after echo cancellation, the platform's noise suppression and gain control, and is the last thing that changes it before the encoder. That is the place an extra denoiser does not hurt echo cancellation; a hook before the processing module (raw microphone samples, as `rtc_rnnoise` on pub.dev takes them on Android; on iOS it uses this same slot) would feed the echo canceller a signal it no longer recognizes.
 
 What sits before the slot, read in the code (libwebrtc of webrtc-sdk `m150_release`, the `150.7871.04` flutter_webrtc 1.6.3 pins; flutter_webrtc 1.6.3):
 
@@ -111,6 +111,21 @@ On a PCMU call on the Redmi A5, one run with the switch on against off: babble +
 With a person holding a Redmi A5 as in a call, read offline from the slot's input: the voice did not change (0.0 dB). With the person silent RNNoise took 7 and 2 dB off keyboard noise in two takes, and under 1 dB off babble or a colleague: it keeps whatever sounds like a voice, so another person's speech mostly passes.
 
 So: it is worth having against keyboards and other noise that is not a voice, it does not make a neighbour's voice go away, and it does no harm to the default running before it. Echo was not worse with it on the Galaxy Tab A (the Redmi A5 has no reference run). The numbers above say nothing of artefacts.
+
+## How it differs from rtc_rnnoise and flutter_nnnoiseless
+
+[rtc_rnnoise](https://pub.dev/packages/rtc_rnnoise) (0.2.0) also serves flutter_webrtc:
+
+- **Android:** it reads the raw microphone PCM through `JavaAudioDeviceModule.AudioBufferCallback`, before the processing module, installed by code in the app's `MainActivity` that reaches flutter_webrtc's private fields by reflection. This plugin uses the public slot after echo cancellation and needs no code in `MainActivity`.
+- **iOS:** the same `capturePostProcessingAdapter` slot as this plugin.
+- **Engine:** RNNoise v0.2 with SpeexDSP 1.2.1, shipped as pre-compiled binaries. This plugin builds RNNoise v0.1.1 from source.
+- **Features:** it has `setSuppressionLevel` and a VAD stream, which this plugin does not have yet. Its README advises turning off WebRTC's noise suppression and gain control; this plugin was measured with them left on.
+
+[flutter_nnnoiseless](https://pub.dev/packages/flutter_nnnoiseless) (1.4.0) is a general denoiser, not a flutter_webrtc add-on:
+
+- It denoises PCM streams and audio files through the Rust `nnnoiseless` crate and `flutter_rust_bridge`, on mobile, desktop and web.
+- It has VAD, a dry/wet mix, resampling and custom models.
+- It does not depend on flutter_webrtc, so it has no access to the audio of a call; an app would have to route that audio to it itself.
 
 ## Engines
 
