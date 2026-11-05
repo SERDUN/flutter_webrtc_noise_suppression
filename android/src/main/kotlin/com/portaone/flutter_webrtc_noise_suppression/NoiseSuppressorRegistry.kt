@@ -21,11 +21,30 @@ internal object NoiseSuppressorRegistry {
     /** The name of RNNoise v0.1.1, the default engine. */
     const val RNNOISE = "rnnoise"
 
+    /** The name of RNNoise v0.2 with its standard model, under evaluation beside v0.1.1. */
+    const val RNNOISE_02 = "rnnoise-0.2"
+
     private val factories = ConcurrentHashMap<String, Factory>()
 
     init {
         register(RNNOISE) { RnnoiseSuppressor() }
+        // Only in a build that has it (gradle property flutter_webrtc_noise_suppression.rnnoise02).
+        if (hasRnnoise02()) {
+            register(RNNOISE_02) { RnnoiseSuppressor(RnnoiseSuppressor.Model.V0_2) }
+        }
     }
+
+    /**
+     * Asks the native library; a library that does not load (an ABI it was not built for, a JVM
+     * test) leaves v0.2 out instead of failing the registry, so RNNoise v0.1.1 still reports its own
+     * error at attach.
+     */
+    private fun hasRnnoise02(): Boolean =
+        try {
+            RnnoiseSuppressor.isAvailable(RnnoiseSuppressor.Model.V0_2)
+        } catch (e: Throwable) {
+            false
+        }
 
     /** Adds the engine [name], or replaces the one of that name. */
     fun register(
